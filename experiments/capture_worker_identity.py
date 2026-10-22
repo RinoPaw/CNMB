@@ -22,7 +22,7 @@ ENTRY_PREFIXES = (
     "com.android.internal."
 )
 CLASS_NAME = re.compile(
-    r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*){2,}$"
+    r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+\.[A-Z_$][A-Za-z0-9_$]*$"
 )
 
 
@@ -69,7 +69,7 @@ def observe(package, seconds, interval, launch=False):
             errors.append({"t": round(t, 2), "kind": "ps_unavailable"})
             time.sleep(interval)
             continue
-        for pid in previous.keys() - parents.keys():
+        for pid in sorted(previous.keys() - parents.keys()):
             events.append({"t": round(t, 2), "pid": pid, "state": "not_in_ps"})
         next_state = {}
         for pid, ppid in sorted(parents.items()):
