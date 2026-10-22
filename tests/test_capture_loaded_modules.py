@@ -57,7 +57,7 @@ class LoadedModulesTests(unittest.TestCase):
         clock = Clock()
         calls = {'maps': 0}
         def adb(*args, **kwargs):
-            if args[-3:] == ('-o', 'PID,NAME') and 'ps' in args:
+            if args[-2:] == ('-o', 'PID,NAME') and 'ps' in args:
                 return ('123 '+m.PACKAGE) if clock.t < 2 else 'PID NAME'
             if 'maps' in args[-1]:
                 calls['maps'] += 1
