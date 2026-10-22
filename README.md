@@ -27,18 +27,23 @@ python .\tools\offline_audit.py .\path\to\base.apk
 
 ### SecNeo 受保护 Dex 的局部恢复
 
-对 12.5.5 原始 `libdatajar.so`，已验证 64,327 个连续 Dex 字符串索引、类型/原型/字段/方法 ID 表，以及这条调用链：
+对 12.5.5 原始 `libdatajar.so`，已确认多个可恢复 Dex 片段、被遮蔽字符串索引的反向恢复方法，以及跨 Dex 的真实 Application 启动调用：
 
 ```text
-DECApp.onCreate()
-  -> DECApp.intiDECabcOnCreate(...)
-  -> DeviceEnvironmentCheck.startCheck()
+CmccApplication.onCreate()
+  -> CmccApplication.DEC_origin_onCreate()
+  -> DECApp.intiDECabcOnCreate(Application)
+      -> isMainProcessDECabc()  // /proc/<pid>/cmdline
+      -> DeviceEnvironmentCheck.startCheck()  // 方法体仍未恢复
 ```
 
 `startCheck` 的方法体尚未恢复，但现在能证明真实应用的 `onCreate()` 已静态接入 DEC 初始化，并能独立审核 RootBeer 检查实现。所有工具只读，并严格校验样本 SHA-256：
 
 ```powershell
-python .\\tools\\inspect_dec_tables.py .\\path\\to\\base.apk
+python .\tools\inspect_dec_tables.py .\path\to\base.apk
+python .\tools\audit_dec_callers.py .\path\to\base.apk
+python .\tools\inspect_cmcc_dec_bridge.py .\path\to\base.apk
+python .\tools\inspect_rootbeer.py .\path\to\base.apk
 ```
 
 ## 实验脚本
@@ -46,7 +51,7 @@ python .\\tools\\inspect_dec_tables.py .\\path\\to\\base.apk
 `experiments/process_lifetime.py` 可以通过 ADB 监视主进程启动和退出，不需要 Frida：
 
 ```powershell
-python .\\experiments\\process_lifetime.py --monitor-only --observe-seconds 25
+python .\experiments\process_lifetime.py --monitor-only --observe-seconds 25
 ```
 
 可选的 `--trace` 加载 `experiments/dec_trace.js`，仅在已经确认动态注入可用、且接受目标进程可能崩溃的测试环境中使用；它需要匹配版本的 `frida` Python 包与服务端。当前设备上**无脚本的 Frida 服务端也曾伴随 Native Crash**，不要将崩溃自动归因为特定 Root 检测规则。
