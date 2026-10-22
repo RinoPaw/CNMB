@@ -21,6 +21,15 @@ CODE = 0x79e8f88
 REFERENCES = (
     (37635, 0x79e8fda, '[DEBUG] Current process is forked from'),
     (49851, 0x79e9022, 'forked from pid:'),
+    (30484, 0x79e8ff2, "Process Name: 'com.eg.android.AlipayGphone'"),
+    (35129, 0x79e900a, "Thread Name: 'DFSDump'"),
+)
+# Additional method calls supporting crash-LOG TEXT PARSING, not process launch.
+TEXT_READER_CALLS = (
+    (0x79e8fb2, 62908, 'Ljava/io/StringReader;', '<init>'),
+    (0x79e8fbc, 62722, 'Ljava/io/BufferedReader;', '<init>'),
+    (0x79e8fcc, 62725, 'Ljava/io/BufferedReader;', 'readLine'),
+    (0x79e8fe0, 63241, 'Ljava/lang/String;', 'startsWith'),
 )
 
 
@@ -81,9 +90,20 @@ def check(data):
         assert data[position] == 0x1b  # const-string/jumbo
         assert u32(data, position + 2) == sid
         print(f'string_id {sid}, const-string/jumbo @ {position:#x}: {phrase}')
+    for position, method_id, owner_descriptor, method_name in TEXT_READER_CALLS:
+        assert instructions_begin <= position < instructions_end - 6
+        assert (position - instructions_begin) % 2 == 0
+        assert data[position] in (*range(0x6e, 0x73), *range(0x74, 0x79))
+        assert struct.unpack_from('<H', data, position + 2)[0] == method_id
+        cls, proto, name = struct.unpack_from(
+            '<HHI', data, method_table + 8 * method_id)
+        assert dex_string(data, pointers[fragment['types'][cls]]) == owner_descriptor
+        assert dex_string(data, pointers[name]) == method_name
+        print(f'  invoke @ {position:#x}: {owner_descriptor}{method_name}')
     print('Class:', OWNER, f'class_def @ {class_pos:#x}')
     print('Method:', METHOD, f'ID {METHOD_ID}, code_item @ {CODE:#x}')
-    print('CONCLUSION: strings belong to Alipay CrashBridge code.')
+    print('CONCLUSION: Alipay CrashBridge parses crash LOG TEXT using StringReader,')
+    print('BufferedReader.readLine, and String.startsWith; no direct fork invocation here.')
     print('LIMIT: this alone does not attribute the observed forked processes.')
 
 
