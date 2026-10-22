@@ -34,6 +34,8 @@ def parse(line_iter, package=PACKAGE):
     # Keep the last debug process PID only while reading one contiguous DEBUG block.
     debug_pid = None
     potential_signals = []
+    runtime_starts = []
+    app_context_pids = set()
     for line in line_iter:
         match = THREADTIME.match(line)
         if not match:
@@ -41,6 +43,18 @@ def parse(line_iter, package=PACKAGE):
         clock, tag, msg = (match.group("clock"),
                            match.group("tag").strip(), match.group("message"))
         event = None
+        # SELinux audit entries can establish which app owns a given PID.
+        # Avoid treating ADB log lines containing /proc/<pid>/maps as identity.
+        if re.search(r"\bapp=" + re.escape(package) + r"(?=\s|$)", msg):
+            app_context_pids.add(int(match.group("logger_pid")))
+        if (tag == "AndroidRuntime" and
+                "START com.android.internal.os.RuntimeInit uid" in msg):
+            uid = re.search(r"\buid\s+(\d+)", msg)
+            if uid:
+                runtime_starts.append({
+                    "clock": clock, "kind": "app_process_runtime_init",
+                    "pid": int(match.group("logger_pid")),
+                    "uid": int(uid.group(1))})
         if tag in PROC_TAGS and msg.startswith("[") and msg.endswith("]"):
             parts = [part.strip() for part in msg[1:-1].split(",")]
             # Android event-log buffer convention: [user,pid,uid,process,...]
@@ -96,6 +110,9 @@ def parse(line_iter, package=PACKAGE):
     for fatal in potential_signals:
         if fatal.pop("explicit_package") or fatal["pid"] in target_pids:
             events.append(fatal)
+    for worker in runtime_starts:
+        if worker["pid"] in app_context_pids:
+            events.append(worker)
     # De-duplicate exact log lines that can appear across multiple log buffers.
     events.sort(key=lambda ev: ev["clock"])
     seen = set()
