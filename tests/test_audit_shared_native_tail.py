@@ -21,6 +21,25 @@ def synthetic_stub():
 
 
 class SharedNativeTailTests(unittest.TestCase):
+    def test_one_variable_byte_does_not_hide_shared_2564_byte_core(self):
+        reference = synthetic_stub()
+        sample = bytearray(reference)
+        sample[0xa24] = (sample[0xa24] + 1) & 0xff
+        self.assertEqual(m.CORE_END - m.CORE_START, 2564)
+        core = reference[m.CORE_START:m.CORE_END]
+        self.assertEqual(sample.find(core), m.CORE_START)
+        self.assertNotEqual(
+            sample[m.CORE_START:0xa25], reference[m.CORE_START:0xa25])
+
+    def test_shared_protection_metadata_is_outside_exact_core(self):
+        reference = synthetic_stub()
+        sample = bytearray(reference)
+        for offset in (0x08, 0x11, 0xa24, 0xa2d, 0xa4c):
+            sample[offset] ^= 0x5a
+        self.assertEqual(
+            sample[m.CORE_START:m.CORE_END],
+            reference[m.CORE_START:m.CORE_END])
+
     def test_all_nine_arm64_syscall_wrappers(self):
         decoded = m.wrappers(synthetic_stub())
         self.assertEqual([x['number'] for x in decoded],
