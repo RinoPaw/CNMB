@@ -11,7 +11,7 @@
 - `libdatajar.so` 含 `DeviceEnvironmentCheck`、`DECApp`、`RootBeer` 等类描述符；目前**没有恢复其受保护方法体**。
 - 在 OPPO CPH2127 / Android 12 上，干净重启后的 DEC 弹窗与 Frida 服务端运行时的原生崩溃属于两类不同的观测结果。崩溃的具体触发代码尚未定位。
 
-详细报告：[docs/12.5.5-static-analysis.md](docs/12.5.5-static-analysis.md)。
+详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
 
 ## 复核
 
@@ -23,6 +23,16 @@ python .\tools\offline_audit.py .\path\to\base.apk
 ```
 
 脚本只读输入文件，并输出 APK 哈希、加固启动桩、相关 Manifest 组件及明文字符串命中。
+
+## 实验脚本
+
+`experiments/process_lifetime.py` 可以通过 ADB 监视主进程启动和退出，不需要 Frida：
+
+```powershell
+python .\\experiments\\process_lifetime.py --monitor-only --observe-seconds 25
+```
+
+可选的 `--trace` 加载 `experiments/dec_trace.js`，仅在已经确认动态注入可用、且接受目标进程可能崩溃的测试环境中使用；它需要匹配版本的 `frida` Python 包与服务端。当前设备上**无脚本的 Frida 服务端也曾伴随 Native Crash**，不要将崩溃自动归因为特定 Root 检测规则。
 
 ## 数据边界
 
