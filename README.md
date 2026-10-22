@@ -74,7 +74,15 @@ python .\experiments\process_lifetime.py --monitor-only --observe-seconds 25
 python .\experiments\capture_loaded_modules.py --launch --seconds 18 --poll-seconds 0.5 --output .\loaded-modules-local.json
 ```
 
-采样器保留相对时间、PID、映射库的文件名、匿名可执行区统计，不保存完整设备内存映射或绝对安装路径。输出仅在本地保存，不应直接提交原始取证数据。**本工具当前只在模拟输入上通过测试，尚未在设备上实测。**
+采样器保留相对时间、PID、映射库的文件名、匿名可执行区统计，不保存完整设备内存映射或绝对安装路径。输出仅在本地保存，不应直接提交原始取证数据。**2026-10-22 已完成首次设备实测。** 原始采样发现与旧 Tombstone 相同字节数的匿名 RWX 区域，同时暴露了旧版脚本误将空 `maps` 判为卸载的问题，已修正。详情见 [ADB 模块映射时间线](docs/2026-10-22-adb-module-timeline.md)。
+
+已经保存的采样可在不连接手机的情况下生成简洁摘要：
+
+```powershell
+python .\experiments\capture_loaded_modules.py --from-json .\loaded-modules-local.json
+```
+
+新版工具会跳过空 `maps` 并单独记录采样不可用；若旧版输出已出现全空快照，应视为无效观测，参见分析报告。
 
 ## 数据边界
 
