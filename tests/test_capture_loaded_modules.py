@@ -16,6 +16,26 @@ class LoadedModulesTests(unittest.TestCase):
               '124 com.greenpoint.android.mc10086.activity:remote\n')
         self.assertEqual(m.process_ids(ps, m.PACKAGE), [123])
 
+    def test_ppid_parser_requires_exact_process_name(self):
+        ps = ("PID PPID NAME\n"
+              "9069 672 com.greenpoint.android.mc10086.activity\n"
+              "9187 9069 com.greenpoint.android.mc10086.activity\n"
+              "9222 9069 com.greenpoint.android.mc10086.activity:remote\n"
+              "9478 1 com.unrelated.app\n")
+        self.assertEqual(m.process_parentage(ps, m.PACKAGE),
+                         {9069: 672, 9187: 9069})
+
+    def test_ppid_in_compact_report(self):
+        summary = m.concise_report({
+            'package': m.PACKAGE, 'duration_seconds': 18,
+            'events': [{'elapsed_seconds': 1.1, 'pid': 9187, 'ppid': 9069,
+                        'native_and_dex_files': ['libDexHelper.so'],
+                        'anonymous_rwx_regions': 1,
+                        'anonymous_rwx_bytes': 1155072,
+                        'memfd_or_ashmem_entries': 5}],
+            'errors': [], 'note': 'synthetic'})
+        self.assertEqual(summary['events'][0]['ppid'], 9069)
+
     def test_maps_redaction(self):
         raw = """75aa6b8000-75aa7d2000 rwxp 00000000 00:00 0
 75afe0b000-75afe10000 r-xp 00000000 00:00 100 /data/app/secret/lib/arm64/libDexHelper.so
