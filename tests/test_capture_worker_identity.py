@@ -50,10 +50,7 @@ class WorkerIdentityTests(unittest.TestCase):
                 self.t += s
         clock = Clock()
         def fake_adb(*args, **kwargs):
-            if args[-4:] == ("-o", "PID,PPID,NAME"):
-                # Deliberately handled below, shape currently has three fields.
-                raise AssertionError("Incorrect ps invocation")
-            if args[-3:] == ("-o", "PID,PPID,NAME"):
+            if args[-2:] == ("-o", "PID,PPID,NAME"):
                 if clock.t < 1:
                     return ("PID PPID NAME\n"
                             "9187 9069 " + module.PACKAGE + "\n")
