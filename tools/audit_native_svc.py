@@ -17,6 +17,19 @@ EXPECTED = {'libDexHelper.so': 0, 'libdexjni.so': 0,
             'libdexvmp.so': 34, 'libdatajar.so': 9}
 SVC_MASK = 0xffe0001f
 SVC_BASE = 0xd4000001
+# MOV W8,#220 is a red herring at these four original native offsets:
+# each instruction stores the low byte to the stack, then overwrites X8.
+MOV_220_BYTE_STORES = (0x1a808, 0x1ac44, 0x1dae0, 0x1e9d0)
+
+
+def is_obfuscated_byte_store_not_clone(data, offset):
+    if offset < 0 or offset + 12 > len(data):
+        return False
+    mov, store, overwrite = struct.unpack_from('<III', data, offset)
+    return (mov == 0x52801b88
+            and store in (0x39003fe8, 0x39007fe8, 0x3819f3a8)
+            and overwrite == 0xf9400e68)
+
 
 
 def svc_file_offsets(data):
@@ -50,6 +63,11 @@ def check(apk):
             source = z.read('lib/arm64-v8a/' + name)
             offsets = svc_file_offsets(source)
             observed[name] = len(offsets)
+            if name == 'libdexvmp.so':
+                assert all(is_obfuscated_byte_store_not_clone(source, off)
+                           for off in MOV_220_BYTE_STORES)
+                print('Four MOV W8,#220 sites store a byte and overwrite X8; '
+                      'none proves a clone syscall.')
             print(f'{name}: executable PT_LOAD SVC candidates={len(offsets)}; '
                   f'file offsets={[hex(x) for x in offsets]}')
         assert observed == EXPECTED, (observed, EXPECTED)
