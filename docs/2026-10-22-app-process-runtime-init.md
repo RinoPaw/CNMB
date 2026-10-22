@@ -114,3 +114,44 @@ python .\experiments\capture_worker_identity.py --launch --seconds 18 --poll-sec
 优先确认第二轮 D 是否也出现 `app_process / RuntimeInit`、它的原生加载路径与退出事件；确认 D 的创建者需要其**首次被重托管之前**的 PPID 观测或操作系统创建事件。分析完成前，`DeviceEnvironmentCheck.startCheck()` 的方法体与 D 的调用关系仍未得到验证。
 
 在完成本次实测后，已提供 [同轮取证关联工具](../experiments/correlate_worker_session.py)。它联合本地 `worker-identity-local.json` 与**第二轮**仍可读取的 Logcat，识别同一主 PID 的 `am_proc_start` 后只处理附近时间窗口。旧文件 `CNMB-runtime-logcat-private.txt` 来源于上一轮启动，不能直接作为本次实验的对应日志。如果 Android 缓冲区中已经没有第二轮主进程启动事件，工具会返回 `device_log_anchor=null`，不猜测其余事件归属。命令见 [README](../README.md)。
+
+## 第二轮 Logcat 确认：D 与第一轮的 RuntimeInit 行为高度重复
+
+同一轮的 `worker-identity-local.json` 经 [`experiments/correlate_worker_session.py`](../experiments/correlate_worker_session.py) 联合**第二轮 Logcat** 核对，找到了精确匹配主 PID 的 `am_proc_start`：`10-22 21:20:10.815`。这是设备自身的统一时钟锚点，避免拿宿主机相对秒数与 Android 系统时间硬对齐。
+
+| 事件 | 第一轮（设备时间） | 第二轮（设备时间） | 各自相对主进程启动的时间 |
+|---|---|---|---|
+| 主进程启动 | 20:22:56.334 | 21:20:10.815 | 0 |
+| D 的首条日志 | 20:23:01.083 | 21:20:15.535 | +4.749 s / +4.720 s |
+| D 的 `RuntimeInit` | 20:23:01.111 | 21:20:15.564 | **+4.777 s / +4.749 s** |
+| `DECMsgDialog` 启动 | 20:23:05.609 | 21:20:19.976 | +9.275 s / +9.161 s |
+| DEC 显示完成 | 20:23:05.818 | 21:20:20.140 | +9.484 s / +9.325 s |
+| 主进程死亡 | 20:23:09.310 | 21:20:23.192 | +12.976 s / +12.377 s |
+
+两个 D 进程都恰有 **37 条该 PID 发出的日志**，而且两轮提供的标签计数完全相同：`app_process=16`、`AndroidRuntime=5`、`ExtensionsLoader=4`、`nativeloader=4`、`auditd=2`、`zygote=2`、`libc=1`、`hw-ProcessState=1`、`ProcessState=1`、`OplusUtils=1`。两轮提取器还都识别到了同一顺序的 `libicu_jni.so`、`libjavacore.so`、`libopenjdk.so` 系统库加载。
+
+因此，**额外 `app_process / RuntimeInit` 进程及其在主进程启动约 4.75 秒后初始化，是两轮重复证实的启动行为**。两轮的 `RuntimeInit` 相对时刻只差 **28 ms**；这属于时间相关性与日志特征证据，尚不能证明该进程是 DEC 的检测执行者。
+
+本轮新增的父进程关系：
+
+- B/C 在实际采样时 PPID 指向主进程 A，**确认两个直接子进程**。
+- D 在 +4.07 主机相对秒时第一次被捕获，PPID 已经为 `1`，其原始父进程身份**无法恢复**。
+- D 的首条设备日志出现于其 `RuntimeInit` 日志前 29 ms，且距离 DEC 启动约 4.441 秒；**不代表 D 的启动命令和源码调用已经找到**。
+- 这个进程的入口类依然没有从 `/proc/PID/cmdline` 或现有 Logcat 中恢复，`has_explicit_main_entry_log=false` 是“未观测到”的结论。
+
+第二轮 `process_log_profiles` 还显示 B/C 的 `lines=0`：只是所给 Logcat 时间窗口内没有这两个 PID 自己发出的匹配日志，不能认定它们没有执行代码。
+
+**下一步需要的证据**：D 最初 fork/exec 的创建事件或可信的 `RuntimeInit` 入口；再沿真实代码或调用记录判断与 `DeviceEnvironmentCheck.startCheck()` 的关联。现阶段不再以“这两个进程在时间上接近”替代调用证明。
+
+## 原始 `forked` 字符串归属纠正
+
+对 SHA-256 固定的 12.5.5 原始 `libdatajar.so`，恢复可见字符串索引表 `0x729300c`（Dex 相对基址 `0x727300c`）后，两个进程相关字符串可直接归属：
+
+| 原文字串 | Dex string ID | `const-string/jumbo` 候选 SO 文件偏移 |
+|---|---:|---|
+| `[DEBUG] Current process is forked from` | 37635 | `0x79e8fda` |
+| `forked from pid:` | 49851 | `0x79e9022` |
+
+它们都在 `Lcom/alipay/mobile/common/logging/CrashBridge;` 的 `isForkedCrashOnlyForTracing` 方法中（Dex method ID **46925**，`code_item @0x79e8f88`）。这是**支付宝 SDK 的崩溃日志代码**；无法因此将这两条字串与 D 的创建流程、SecNeo 加固或 DEC 直接关联。
+
+可使用 [`tools/audit_fork_log_owner.py`](../tools/audit_fork_log_owner.py) 在固定原版 APK/SO 上复核；它验证方法所有者、类定义、方法体地址与这两处固定的字符串指令候选。字符串归属不等于执行证据。
