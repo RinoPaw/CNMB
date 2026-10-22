@@ -154,4 +154,15 @@ python .\experiments\capture_worker_identity.py --launch --seconds 18 --poll-sec
 
 它们都在 `Lcom/alipay/mobile/common/logging/CrashBridge;` 的 `isForkedCrashOnlyForTracing` 方法中（Dex method ID **46925**，`code_item @0x79e8f88`）。这是**支付宝 SDK 的崩溃日志代码**；无法因此将这两条字串与 D 的创建流程、SecNeo 加固或 DEC 直接关联。
 
+对相同方法体进一步验证，另外两条 `const-string/jumbo` 分别包含 `Process Name: 'com.eg.android.AlipayGphone'`（SID 30484，SO `0x79e8ff2`）和 `Thread Name: 'DFSDump'`（SID 35129，SO `0x79e900a`）。原生指令引用还包括：
+
+- `java.io.StringReader.<init>`，SO `0x79e8fb2`；
+- `java.io.BufferedReader.<init>`，SO `0x79e8fbc`；
+- `BufferedReader.readLine`，SO `0x79e8fcc`；
+- `String.startsWith`，SO `0x79e8fe0`。
+
+这些方法调用和日志行前缀串构成了更强的原版证据：`isForkedCrashOnlyForTracing` **读取并筛查崩溃日志文本**。已恢复的该方法直接调用里没有 `fork`、`execve` 或新的 `app_process` 启动。这里没有证明任何实际创建 D 的代码。
+
+
+
 可使用 [`tools/audit_fork_log_owner.py`](../tools/audit_fork_log_owner.py) 在固定原版 APK/SO 上复核；它验证方法所有者、类定义、方法体地址与这两处固定的字符串指令候选。字符串归属不等于执行证据。
