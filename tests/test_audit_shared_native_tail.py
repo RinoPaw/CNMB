@@ -27,6 +27,20 @@ class SharedNativeTailTests(unittest.TestCase):
                          [64, 215, 222, 226, 64, 63, 56, 57, 94])
         self.assertNotIn(220, [x['number'] for x in decoded])
 
+    def test_loader_maps_mprotect_and_icache_bytes(self):
+        stub = synthetic_stub()
+        stub[0x550:0x550+len(m.STUB_MARKER)] = m.STUB_MARKER
+        stub[0x9f4:0x9f4+len(m.MAPS)] = m.MAPS
+        for offset, insn in m.LOADER_INSTRUCTIONS.items():
+            struct.pack_into('<I', stub, offset, insn)
+        verified = m.loader_operations(stub)
+        self.assertTrue(verified['reads_own_process_maps'])
+        self.assertTrue(verified['sets_mprotect_7_at_callsite'])
+        self.assertTrue(verified['performs_instruction_cache_maintenance'])
+        stub[0x5e4] ^= 1
+        with self.assertRaisesRegex(ValueError, 'Loader operation mismatch'):
+            m.loader_operations(stub)
+
     def test_modified_wrapper_rejected(self):
         stub = synthetic_stub()
         stub[0x150] ^= 1
