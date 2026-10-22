@@ -8,11 +8,11 @@
 
 - 中国移动 12.5.5 APK 的 SecNeo 启动桩、Manifest 中的 `DECMsgDialog` 和若干代码字符串已完成初步定位。
 - `classes.dex` 中确认存在读取 `/proc/self/status`、解析 `TracerPid:` 的实现，但**没有证据证明其直接触发 Root 弹窗**。
-- 已恢复多组 Dex 的元数据、原本被遮蔽的早期字符串索引及 50,000+ 方法体；确认 `CmccApplication.onCreate()` 静态调用 DEC 初始化，并恢复 `RootBeer` 的具体检查实现。
-- `DeviceEnvironmentCheck.startCheck()` 的方法体仍未定位；`RootBeer` 在对应片段中没有外部直接调用点，**尚无证据表明它触发 DEC 警告**。
+- 已恢复并验证 **14 组** Dex 元数据表，覆盖 101,716 条类定义记录；能重建部分被遮蔽的字符串索引，确认 `CmccApplication.onCreate()` 调用 DEC 初始化，并恢复 `RootBeer` 的具体检查实现。
+- `DeviceEnvironmentCheck.startCheck()` 的方法体仍未定位：14 组片段中其类只有引用、没有定义；`RootBeer` 在对应片段中没有外部直接调用点，**尚无证据表明它触发 DEC 警告**。
 - 在 OPPO CPH2127 / Android 12 上，干净重启后的 DEC 弹窗与 Frida 服务端运行时的原生崩溃属于两类不同的观测结果。崩溃的具体触发代码尚未定位。
 
-详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
+详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[14 组 Dex 元数据扫描](docs/12.5.5-fourteen-dex-census.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
 
 ## 复核
 
@@ -44,6 +44,7 @@ python .\tools\inspect_dec_tables.py .\path\to\base.apk
 python .\tools\audit_dec_callers.py .\path\to\base.apk
 python .\tools\inspect_cmcc_dec_bridge.py .\path\to\base.apk
 python .\tools\inspect_rootbeer.py .\path\to\base.apk
+python .\tools\carve_all_dex.py .\path\to\base.apk
 ```
 
 ## 实验脚本
