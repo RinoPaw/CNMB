@@ -41,6 +41,24 @@ python .\experiments\parse_runtime_events.py .\CNMB-runtime-logcat-private.txt
 
 预计可额外输出 `app_process_runtime_init` 类型事件；实际是否输出，仍以用户本地完整日志解析结果为准。代码测试采用合成日志，不引入原始用户记录。
 
+## 现有日志的进一步离线检查（无需重新启动）
+
+增加了只读工具 [`experiments/profile_runtime_worker.py`](../experiments/profile_runtime_worker.py)。它只分析**同一 PID 发出的**日志行，输出消息时间范围、日志标签计数和经严格白名单过滤的运行时事件；不会包含原始日志正文、路径、参数或设备隐私内容。
+
+```powershell
+python .\experiments\profile_runtime_worker.py .\CNMB-runtime-logcat-private.txt --pid 9187
+```
+
+若日志中有显式 `Calling main entry` 信息，工具会记录 Java 类名及时间；若没有，只报告 `has_explicit_main_entry_log=false`。这不意味着该进程没有 Java 入口，日志本身可能没有打印该信息。
+
+下一轮可选纯 ADB 采样添加 `--parentage`，以 `ps -A -o PID,PPID,NAME` 读取进程父 PID：
+
+```powershell
+python .\experiments\capture_loaded_modules.py --launch --parentage --seconds 18 --poll-seconds 0.5 --output .\loaded-modules-parentage-local.json
+```
+
+该命令会重启目标应用，需在确认 Frida Server 已停止后执行；输出留在本地。PPID 是**采样瞬间的父进程**，若原始创建者已退出、进程已被重新托管，观测到的 PPID 也可能已变化。工具仅进行 ADB 查询，不能从 PPID 直接推导所执行的 Java 类。
+
 ## 后续证据需求
 
 先从当前已有日志确认 D 的后续加载与退出阶段；再开展新一轮**纯 ADB** 实验获取短生命周期进程的真实 `PPID`、命令行入口类名及启动/退出时钟。由于旧记录没有保存这些字段，事后无法仅凭 PID 数字恢复父子关系。
