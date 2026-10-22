@@ -28,6 +28,14 @@ class NativeSyscallAuditTests(unittest.TestCase):
         struct.pack_into('<I', image, 0xc0, 0xd4000001)  # outside load
         self.assertEqual(m.svc_file_offsets(image), [0x84, 0x88])
 
+    def test_mov_220_immediate_used_as_stack_byte(self):
+        # mov w8,#0xdc; strb w8,[sp,#0xf]; ldr x8,[x19,#0x18]
+        data = struct.pack('<III', 0x52801b88, 0x39003fe8, 0xf9400e68)
+        self.assertTrue(m.is_obfuscated_byte_store_not_clone(data, 0))
+        # A genuine MOV x8,#220 followed by an SVC is a different pattern.
+        trap = struct.pack('<II', 0xd2801b88, 0xd4000001)
+        self.assertFalse(m.is_obfuscated_byte_store_not_clone(trap, 0))
+
     def test_non_arm64_fails_closed(self):
         with self.assertRaises(ValueError):
             m.svc_file_offsets(b'NOT ELF')
