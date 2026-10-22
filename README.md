@@ -124,6 +124,21 @@ python .\experiments\capture_worker_identity.py --launch --seconds 18 --poll-sec
 
 该工具记录目标进程的 PPID 和经过严格筛选的 Java 入口类**候选**；不会保存原始 `/proc/PID/cmdline` 或启动参数。读取不到候选并不能证明不存在入口。必须在确认设备已连接、Frida Server 停止后使用；`--launch` 会重启目标应用。完整局限参见 [RuntimeInit 研究记录](docs/2026-10-22-app-process-runtime-init.md)。
 
+### 关联第二轮进程身份和 DEC 日志
+
+2026-10-22 第二轮实测已确认主进程的两个子进程（PPID 直接指向主 PID），以及首次捕获时 PPID 已为 `1` 的独立短命进程。先保存**新一轮**手机现存 Logcat，不会重启 App：
+
+```powershell
+adb logcat -d -v threadtime -b main -b system -b events -b crash |
+    Set-Content -Encoding utf8 .\CNMB-runtime-logcat-2119-private.txt
+
+python .\experiments\correlate_worker_session.py `
+    --identity .\worker-identity-local.json `
+    --logcat .\CNMB-runtime-logcat-2119-private.txt
+```
+
+分析器要求新日志中具有对应主进程 PID 的 `am_proc_start`，才选取该轮的设备本地时间窗口；若已被覆盖，则拒绝关联旧的 DEC 日志。输入与输出都是本地取证材料，仅公开脱敏后的事实。主机相对采样秒数与手机 Logcat 时间不能直接精确相减。
+
 ## 数据边界
 
 **请勿提交** APK、SO、DEX 转储、完整 logcat、Tombstone、`envc.push`、设备标识、令牌、账号信息或未经审查的诊断 ZIP。公开仓库只保留可公开的分析代码、去标识化结论及校验哈希。此仓库不分发原版商业客户端。
