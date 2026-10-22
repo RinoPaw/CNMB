@@ -112,3 +112,5 @@ python .\experiments\capture_worker_identity.py --launch --seconds 18 --poll-sec
 ### 下一个证据问题
 
 优先确认第二轮 D 是否也出现 `app_process / RuntimeInit`、它的原生加载路径与退出事件；确认 D 的创建者需要其**首次被重托管之前**的 PPID 观测或操作系统创建事件。分析完成前，`DeviceEnvironmentCheck.startCheck()` 的方法体与 D 的调用关系仍未得到验证。
+
+在完成本次实测后，已提供 [同轮取证关联工具](../experiments/correlate_worker_session.py)。它联合本地 `worker-identity-local.json` 与**第二轮**仍可读取的 Logcat，识别同一主 PID 的 `am_proc_start` 后只处理附近时间窗口。旧文件 `CNMB-runtime-logcat-private.txt` 来源于上一轮启动，不能直接作为本次实验的对应日志。如果 Android 缓冲区中已经没有第二轮主进程启动事件，工具会返回 `device_log_anchor=null`，不猜测其余事件归属。命令见 [README](../README.md)。
