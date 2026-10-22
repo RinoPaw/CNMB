@@ -13,9 +13,10 @@
 - 原版另含 ZIP 包装的 `libZWRiskComm` 风险 SDK，内层 ELF 有确切反 Frida 字符串；目前未证明它介入 DEC。`0x978` 崩溃 Tombstone 记录到 `libDexHelper.so` 和匿名 `rwx` 映射，但缺失原生代码归属证据。
 - 在 OPPO CPH2127 / Android 12 上，干净重启后的 DEC 弹窗与 Frida 服务端运行时的原生崩溃属于两类不同的观测结果。崩溃的具体触发代码尚未定位。
 - 两轮独立实测都观察到额外 `app_process / RuntimeInit` 在主进程启动约 **4.75 秒**后初始化；第二轮通过 PPID 证实主进程至少有两个直接子进程，另有一进程在首次采样时 PPID 已为 1。两轮随后均显示 DEC 警告并结束主进程，**时间相关性尚不足以证明检测调用**。
+- 原版 APK 全部 191 份 ARM64 SO 中，**10 份**含逐字节相同的 2,565 B 装载辅助核心，附带 `/proc/self/maps`、`mprotect(RWX)`、缓存刷新及九条系统调用封装；该段还有 `__b_a_n_g_c_l_e__check1234567_` 原版签名。此为**共用保护代码证据**，尚未与 DEC 判定建立调用关系。
 - 先前原版 SO 中的 `forked from pid:` 及 `Current process is forked from` 已通过 Dex 方法归属和指令核实：它们属于支付宝 `CrashBridge.isForkedCrashOnlyForTracing` 的日志文本解析逻辑，不能作为 SecNeo 创建子进程的证据。
 
-详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[14 组 Dex 元数据扫描](docs/12.5.5-fourteen-dex-census.md)；[原版进程操作与 ARM64 系统调用审计](docs/12.5.5-native-and-dalvik-process-surface.md)；[原生加载与崩溃阶段](docs/12.5.5-native-loader-crash-stage.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
+详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[14 组 Dex 元数据扫描](docs/12.5.5-fourteen-dex-census.md)；[原版进程操作与 ARM64 系统调用审计](docs/12.5.5-native-and-dalvik-process-surface.md)；[十份 ARM64 库共用装载尾段](docs/12.5.5-shared-native-loader-tail.md)；[原生加载与崩溃阶段](docs/12.5.5-native-loader-crash-stage.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
 
 ## 复核
 
@@ -51,6 +52,7 @@ python .\tools\carve_all_dex.py .\path\to\base.apk
 python .\tools\audit_fork_log_owner.py .\path\to\base.apk
 python .\tools\audit_process_calls.py .\path\to\base.apk
 python .\tools\audit_native_svc.py .\path\to\base.apk
+python .\tools\audit_shared_native_tail.py .\path\to\base.apk
 ```
 
 ### 原生加载阶段检查（离线）
