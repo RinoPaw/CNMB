@@ -79,6 +79,37 @@ def wrappers(tail):
     return result
 
 
+# Decoded original AArch64 helper operations, at offsets relative to the common
+# 0xa50-byte tail. The bytes are verified, not inferred from string presence.
+LOADER_INSTRUCTIONS = {
+    0x238: 0x90000001,  # adrp x1, page containing /proc/self/maps
+    0x240: 0x9129b021,  # add x1, x1, #0xa6c -> maps pathname
+    0x268: 0x97ffffb9,  # bl openat wrapper at +0x150
+    0x294: 0x97ffffab,  # bl read wrapper at +0x144
+    0x308: 0x97ffff97,  # bl exit_group wrapper at +0x168, conditional
+    0x310: 0x97ffff92,  # bl close wrapper at +0x15c
+    0x5e4: 0x528000e2,  # mov w2,#7 (PROT_READ|PROT_WRITE|PROT_EXEC)
+    0x614: 0x97fffec5,  # bl mprotect wrapper at +0x12c
+    0x1d8: 0xd50b7b23,  # dc cvau,x3
+    0x1fc: 0xd50b7520,  # ic ivau,x0
+    0x20c: 0xd5033fdf,  # isb
+    0x670: 0x97fffecf,  # bl instruction-cache maintenance helper
+}
+
+
+def loader_operations(tail):
+    for offset, insn in LOADER_INSTRUCTIONS.items():
+        if struct.unpack_from('<I', tail, offset)[0] != insn:
+            raise ValueError(f'Loader operation mismatch at {offset:#x}')
+    if tail[0x9f4:0x9f4+len(MAPS)] != MAPS:
+        raise ValueError('Missing embedded /proc/self/maps pathname')
+    if tail.count(STUB_MARKER) != 1:
+        raise ValueError('Missing unique original protection marker')
+    return {'reads_own_process_maps': True,
+            'sets_mprotect_7_at_callsite': True,
+            'performs_instruction_cache_maintenance': True}
+
+
 def analyze(apk):
     with zipfile.ZipFile(io.BytesIO(apk)) as z:
         libs = [n for n in z.namelist()
@@ -91,6 +122,7 @@ def analyze(apk):
         assert reference.count(MAPS) == 1
         assert reference.find(MAPS) == 0x9f4
         syscall_info = wrappers(reference)
+        helper_info = loader_operations(reference)
         found = []
         for member in libs:
             image = z.read(member)
@@ -104,7 +136,7 @@ def analyze(apk):
             if len(tail) != TAIL_SIZE or tail[CORE_START:CORE_END] != core:
                 raise ValueError('Invalid embedded stub at ' + member)
             va = executable_segment(image, start)
-            if wrappers(tail) != syscall_info:
+            if wrappers(tail) != syscall_info or loader_operations(tail) != helper_info:
                 raise ValueError('Divergent wrappers ' + member)
             found.append({'library': member.rsplit('/', 1)[-1],
                           'file_offset': f'0x{start:x}',
@@ -123,6 +155,7 @@ def analyze(apk):
         'literal_maps_path': MAPS.rstrip(b'\0').decode(),
         'core_relative_range': '[0x20, 0xa25)',
         'syscall_wrappers_per_stub': syscall_info,
+        'loader_helper_verified': helper_info,
         'matched_libraries': found,
         'limit': ('Static file and instruction evidence only. No proven link to '
                   'DEC startCheck, no proof of actual execution or vendor attribution. '
