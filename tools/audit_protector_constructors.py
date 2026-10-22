@@ -111,6 +111,43 @@ def inspect(data, name, config):
     }
 
 
+# Both libraries contain the exact same executable PT_LOAD suffix, including
+# code and embedded strings. The last divergent byte is immediately before it.
+SHARED_BOOTSTRAP = {
+    "DexHelper_range": (0x295a, 0x4ca0),
+    "dexjni_range": (0x95a, 0x2ca0),
+    "bytes": 9030,
+    "sha256": "08ceab5789747cd32ea687615f47198489db37d2564b2841b083a1397992ff46",
+}
+
+
+def compare_bootstrap(helper, jni):
+    ha, hz = SHARED_BOOTSTRAP["DexHelper_range"]
+    ja, jz = SHARED_BOOTSTRAP["dexjni_range"]
+    left, right = helper[ha:hz], jni[ja:jz]
+    if (len(left) != SHARED_BOOTSTRAP["bytes"] or left != right or
+            hashlib.sha256(left).hexdigest() != SHARED_BOOTSTRAP["sha256"]):
+        raise ValueError("Native bootstrap suffix mismatch")
+    if helper[ha-1] == jni[ja-1]:
+        raise ValueError("Bootstrap suffix starts later than the actual match")
+    for marker, off in ((b"JNI_OnLoad", 0x49f8),
+                        (b"/proc/self/maps", 0x4a08)):
+        if helper[off:off+len(marker)] != marker:
+            raise ValueError("Original DexHelper marker mismatch")
+        if jni[off-0x2000:off-0x2000+len(marker)] != marker:
+            raise ValueError("Original dexjni marker mismatch")
+    return {
+        "identical_executable_segment_suffix_bytes": len(left),
+        "libDexHelper_file_range": "[0x295a,0x4ca0)",
+        "libdexjni_file_range": "[0x95a,0x2ca0)",
+        "constant_file_offset_shift": "0x2000",
+        "sha256_shared_suffix": SHARED_BOOTSTRAP["sha256"],
+        "matching_embedded_strings": ["JNI_OnLoad", "/proc/self/maps"],
+        "interpretation_limit": ("Contains code and embedded strings; a byte-identical "
+                                 "suffix does not prove equal loader effects or "
+                                 "that libdexjni.so ran in the observed session."),
+    }
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="Original pinned APK or diagnostic ZIP")
@@ -122,9 +159,11 @@ def main():
     if hashlib.sha256(raw).hexdigest() != APK_SHA256:
         raise ValueError("Original APK SHA-256 mismatch")
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-        report = [inspect(archive.read("lib/arm64-v8a/"+name), name, config)
+        images = {name: archive.read("lib/arm64-v8a/"+name) for name in LIBS}
+        report = [inspect(images[name], name, config)
                   for name, config in LIBS.items()]
-    print(json.dumps({"constructors": report,
+        shared = compare_bootstrap(images["libDexHelper.so"], images["libdexjni.so"])
+    print(json.dumps({"constructors": report, "shared_bootstrap": shared,
                       "limitation": ("Static dynamic-linker metadata only; "
                                      "does not prove execution or DEC caller identity.")},
                      ensure_ascii=False, indent=2))
