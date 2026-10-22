@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read-only census of repeated executable loader stubs in pinned CNMB 12.5.5.
 
-The signature is a 2,565-byte identical ARM64 executable core; it appears in
-10/191 original APK arm64 shared libraries. It contains syscalls for file IO,
+The signature is a 2,564-byte identical ARM64 executable core in 174/191
+original APK ARM64 shared libraries; ten match one additional code byte. It contains syscalls for file IO,
 memory mapping, and process exit, but contains no clone/execve wrapper.
 """
 import argparse
@@ -16,14 +16,27 @@ from pathlib import Path
 APK_SHA256 = '6282d2cf05f76f37a60fff322bcf0d6f1d876829e5c9c4eae5cdd93b7a972a83'
 TAIL_SIZE = 0xa50
 CORE_START = 0x20
-CORE_END = 0xa25
+CORE_END = 0xa24
 STUB_MARKER = b'__b_a_n_g_c_l_e__check1234567_'
 MAPS = b'/proc/self/maps\x00'
-EXPECTED_NAMES = {
+# Exactly these ten carry an extra matching byte at relative offset 0xa24.
+EXPECTED_EXTENDED_2565 = {
     'libAlipayBitmapNative.so', 'libdatabase_sqlcrypto.so',
     'libdatajar.so', 'libdexvmp.so', 'libentryexpro.so',
     'libijkrecorder.so', 'libijksdl.so', 'libmmkv.so',
     'libv8worker-native.so', 'libyewu.so',
+}
+# These 17 library entries do not have this particular executable stub.
+EXPECTED_UNMATCHED = {
+    'libZWRisk-v7_6_4r_61803305.so',
+    'libZWRiskComm-v7_6_4r_61803305.so',
+    'libkh.so', 'liblbs.so', 'libsgmain.so',
+    'libsgmainso.ucb.so', 'libsgmainso.version.so',
+    'libsgmiddletier.so', 'libsgmiddletierso.ucb.so',
+    'libsgmiddletierso.version.so', 'libsgmisc.so',
+    'libsgnocaptcha.so', 'libsgsecuritybody.so',
+    'libsgsecuritybodyso.ucb.so', 'libsgsecuritybodyso.version.so',
+    'libdexjni.so', 'libDexHelper.so',
 }
 # Offsets relative to each 0xa50-byte executable segment.
 SYSCALLS = {
@@ -117,7 +130,7 @@ def analyze(apk):
         reference = z.read('lib/arm64-v8a/libdexvmp.so')[0x7f078:0x7fac8]
         assert len(reference) == TAIL_SIZE
         core = reference[CORE_START:CORE_END]
-        assert len(core) == 2565
+        assert len(core) == 2564
         assert reference.count(STUB_MARKER) == 1
         assert reference.count(MAPS) == 1
         assert reference.find(MAPS) == 0x9f4
@@ -138,25 +151,39 @@ def analyze(apk):
             va = executable_segment(image, start)
             if wrappers(tail) != syscall_info or loader_operations(tail) != helper_info:
                 raise ValueError('Divergent wrappers ' + member)
+            if sum(a != b for a, b in zip(tail, reference)) > 31:
+                raise ValueError('Unusually divergent helper code in ' + member)
             found.append({'library': member.rsplit('/', 1)[-1],
                           'file_offset': f'0x{start:x}',
                           'virtual_address': f'0x{va:x}',
                           'total_stub_bytes': TAIL_SIZE,
                           'shared_core_bytes': len(core),
                           'different_bytes_vs_dexvmp': sum(
-                              a != b for a, b in zip(tail, reference))})
-    if {f['library'] for f in found} != EXPECTED_NAMES or len(libs) != 191:
-        raise ValueError('Original 191-library census diverges')
+                              a != b for a, b in zip(tail, reference)),
+                          'extended_2565_byte_core':
+                              tail[CORE_START:0xa25] ==
+                              reference[CORE_START:0xa25]})
+    matched = {item['library'] for item in found}
+    absent = {entry.rsplit('/', 1)[-1] for entry in libs} - matched
+    extended = {item['library'] for item in found if item['extended_2565_byte_core']}
+    if (len(libs) != 191 or len(found) != 174 or
+            absent != EXPECTED_UNMATCHED or
+            extended != EXPECTED_EXTENDED_2565):
+        raise ValueError('Original 191-library / 174-stub census diverges')
     found.sort(key=lambda item: item['library'])
     return {
         'arm64_libraries_scanned': len(libs),
         'libraries_with_identical_core': len(found),
+        'libraries_with_extended_2565_byte_match': len(extended),
+        'unmatched_libraries': sorted(absent),
         'stub_marker': STUB_MARKER.decode(),
         'literal_maps_path': MAPS.rstrip(b'\0').decode(),
-        'core_relative_range': '[0x20, 0xa25)',
+        'core_relative_range': '[0x20, 0xa24)',
         'syscall_wrappers_per_stub': syscall_info,
         'loader_helper_verified': helper_info,
         'matched_libraries': found,
+        'max_entire_tail_different_bytes': max(
+            item['different_bytes_vs_dexvmp'] for item in found),
         'limit': ('Static file and instruction evidence only. No proven link to '
                   'DEC startCheck, no proof of actual execution or vendor attribution. '
                   'No clone, fork or execve wrapper among these nine SVC sites.')
