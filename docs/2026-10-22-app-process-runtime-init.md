@@ -59,6 +59,22 @@ python .\experiments\capture_loaded_modules.py --launch --parentage --seconds 18
 
 该命令会重启目标应用，需在确认 Frida Server 已停止后执行；输出留在本地。PPID 是**采样瞬间的父进程**，若原始创建者已退出、进程已被重新托管，观测到的 PPID 也可能已变化。工具仅进行 ADB 查询，不能从 PPID 直接推导所执行的 Java 类。
 
+## 可选：短命进程的 PPID 与 Java 入口探针
+
+新增 [`experiments/capture_worker_identity.py`](../experiments/capture_worker_identity.py)，优先查询确切匹配目标包名的 PID、PPID，然后尝试读取对应 `/proc/PID/cmdline`，仅保留：
+
+- 相对采样秒数和目标 PID、采样时 PPID；
+- `argv0` 的概括类型（`app_process`、应用包名或其他）；
+- 属于有限可信命名空间、最后一段符合 Java 类命名习惯的入口类**候选**。
+
+工具不会存储原始 argv、应用参数或任意命令行文本。即使取得了一个 Java 类名，仍需将其与启动期间的日志或字节码匹配，才能确认它确实被调用。内核可能已经覆盖 argv，读取失败也不能当作不存在入口。
+
+```powershell
+python .\experiments\capture_worker_identity.py --launch --seconds 18 --poll-seconds 0.25 --output .\worker-identity-local.json
+```
+
+`--launch` 会停止再启动目标应用，因而仅在确实需要重测时使用。实测期间需要 ADB 授权和读取目标进程 `/proc/PID/cmdline` 的权限。该工具的取证流程目前仅通过合成样本测试，**尚未在目标手机上实际执行**。此前的离线 `profile_runtime_worker.py` 仍是首选。
+
 ## 后续证据需求
 
 先从当前已有日志确认 D 的后续加载与退出阶段；再开展新一轮**纯 ADB** 实验获取短生命周期进程的真实 `PPID`、命令行入口类名及启动/退出时钟。由于旧记录没有保存这些字段，事后无法仅凭 PID 数字恢复父子关系。
