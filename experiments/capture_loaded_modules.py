@@ -27,6 +27,49 @@ def run_adb(*arguments, timeout=6):
     return result.stdout.decode('utf-8','replace')
 
 
+def parse_adb_devices(output):
+    """Return [(serial, state)] from `adb devices -l` output."""
+    devices = []
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[1] in {
+            'device', 'unauthorized', 'offline', 'recovery',
+            'sideload', 'bootloader', 'no',
+        }:
+            devices.append((fields[0], fields[1]))
+    return devices
+
+
+def require_ready_device():
+    """Fail before changing app state if ADB lacks exactly one ready device."""
+    try:
+        devices = parse_adb_devices(run_adb('devices', '-l', timeout=10))
+    except FileNotFoundError as exc:
+        raise RuntimeError('找不到 adb 命令，请先安装 Android platform-tools 并配置 PATH。') from exc
+    ready = [serial for serial, state in devices if state == 'device']
+    if len(devices) == 1 and len(ready) == 1:
+        return ready[0]
+    if not devices:
+        raise RuntimeError(
+            'ADB 未发现手机。先运行 adb devices -l，确认 USB/无线 ADB 已连接；'
+            'USB 调试已启用，必要时执行 adb kill-server、adb start-server。'
+        )
+    if any(state == 'unauthorized' for _, state in devices):
+        raise RuntimeError(
+            'ADB 设备未授权。请解锁手机并确认「允许 USB 调试」弹窗，'
+            '然后运行 adb devices -l。'
+        )
+    if any(state == 'offline' for _, state in devices):
+        raise RuntimeError(
+            'ADB 设备 offline。请等待手机完成启动，重新连接，再运行 adb devices -l。'
+        )
+    raise RuntimeError(
+        'ADB 当前设备状态不符合要求或连接了多台设备：'
+        + ', '.join(f'{serial}={state}' for serial, state in devices)
+        + '。本脚本要求恰好一台处于 device 状态的设备。'
+    )
+
+
 def process_ids(ps_output, package):
     return sorted({int(m[1]) for line in ps_output.splitlines()
                    if (m:=PS_LINE.match(line)) and m[2]==package})
@@ -110,6 +153,11 @@ def main():
         p.error('Invalid package name')
     if args.seconds<=0 or not 0.1<=args.poll_seconds<=10:
         p.error('Invalid duration / polling interval')
+    try:
+        serial = require_ready_device()
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
+        p.exit(2, f"ADB 预检查失败：{error}\n")
+    print(f"ADB connected: {serial}", flush=True)
     result=observe(args.package,args.seconds,args.poll_seconds,args.launch)
     encoded=json.dumps(result,ensure_ascii=False,indent=2)
     if args.output:
