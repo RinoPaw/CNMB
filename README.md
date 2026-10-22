@@ -10,9 +10,10 @@
 - `classes.dex` 中确认存在读取 `/proc/self/status`、解析 `TracerPid:` 的实现，但**没有证据证明其直接触发 Root 弹窗**。
 - 已恢复并验证 **14 组** Dex 元数据表，覆盖 101,716 条类定义记录；能重建部分被遮蔽的字符串索引，确认 `CmccApplication.onCreate()` 调用 DEC 初始化，并恢复 `RootBeer` 的具体检查实现。
 - `DeviceEnvironmentCheck.startCheck()` 的方法体仍未定位：14 组片段中其类只有引用、没有定义；`RootBeer` 在对应片段中没有外部直接调用点，**尚无证据表明它触发 DEC 警告**。
+- 原版另含 ZIP 包装的 `libZWRiskComm` 风险 SDK，内层 ELF 有确切反 Frida 字符串；目前未证明它介入 DEC。`0x978` 崩溃 Tombstone 记录到 `libDexHelper.so` 和匿名 `rwx` 映射，但缺失原生代码归属证据。
 - 在 OPPO CPH2127 / Android 12 上，干净重启后的 DEC 弹窗与 Frida 服务端运行时的原生崩溃属于两类不同的观测结果。崩溃的具体触发代码尚未定位。
 
-详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[14 组 Dex 元数据扫描](docs/12.5.5-fourteen-dex-census.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
+详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[14 组 Dex 元数据扫描](docs/12.5.5-fourteen-dex-census.md)；[原生加载与崩溃阶段](docs/12.5.5-native-loader-crash-stage.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
 
 ## 复核
 
@@ -46,6 +47,14 @@ python .\tools\inspect_cmcc_dec_bridge.py .\path\to\base.apk
 python .\tools\inspect_rootbeer.py .\path\to\base.apk
 python .\tools\carve_all_dex.py .\path\to\base.apk
 ```
+
+### 原生加载阶段检查（离线）
+
+```powershell
+python .\tools\inspect_native_loader.py .\path\to\diagnostic.zip --tombstone .\path\to\tombstone.txt
+```
+
+只读展开 APK 及 ZIP 包装的 ELF，核验目标 SO 的静态字面量及崩溃时已映射的库；仅输出脱敏 JSON 摘要。
 
 ## 实验脚本
 
