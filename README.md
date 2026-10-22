@@ -66,6 +66,16 @@ python .\experiments\process_lifetime.py --monitor-only --observe-seconds 25
 
 可选的 `--trace` 加载 `experiments/dec_trace.js`，仅在已经确认动态注入可用、且接受目标进程可能崩溃的测试环境中使用；它需要匹配版本的 `frida` Python 包与服务端。当前设备上**无脚本的 Frida 服务端也曾伴随 Native Crash**，不要将崩溃自动归因为特定 Root 检测规则。
 
+### 只用 ADB 采样运行时加载状态
+
+在已连接、具有读取目标进程 maps 权限的设备上，先保证 Frida 服务端没有运行。以下操作会停止并重新启动中国移动，连续采样 18 秒：
+
+```powershell
+python .\experiments\capture_loaded_modules.py --launch --seconds 18 --poll-seconds 0.5 --output .\loaded-modules-local.json
+```
+
+采样器保留相对时间、PID、映射库的文件名、匿名可执行区统计，不保存完整设备内存映射或绝对安装路径。输出仅在本地保存，不应直接提交原始取证数据。**本工具当前只在模拟输入上通过测试，尚未在设备上实测。**
+
 ## 数据边界
 
 **请勿提交** APK、SO、DEX 转储、完整 logcat、Tombstone、`envc.push`、设备标识、令牌、账号信息或未经审查的诊断 ZIP。公开仓库只保留可公开的分析代码、去标识化结论及校验哈希。此仓库不分发原版商业客户端。
