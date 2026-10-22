@@ -114,6 +114,16 @@ python .\experiments\capture_loaded_modules.py --launch --parentage --seconds 18
 
 `PPID` 是取样时的父进程，可能因为进程重托管而不同于原始创建者；日志缺少显式入口类时不能猜测其身份。完整说明见 [RuntimeInit 进程报告](docs/2026-10-22-app-process-runtime-init.md)。
 
+### 可选：捕获临时进程入口候选
+
+如果现有 PID 9187 的离线日志未包含显式 Java 入口类，需要重新取证时可使用**独立的纯 ADB 工具**：
+
+```powershell
+python .\experiments\capture_worker_identity.py --launch --seconds 18 --poll-seconds 0.25 --output .\worker-identity-local.json
+```
+
+该工具记录目标进程的 PPID 和经过严格筛选的 Java 入口类**候选**；不会保存原始 `/proc/PID/cmdline` 或启动参数。读取不到候选并不能证明不存在入口。必须在确认设备已连接、Frida Server 停止后使用；`--launch` 会重启目标应用。完整局限参见 [RuntimeInit 研究记录](docs/2026-10-22-app-process-runtime-init.md)。
+
 ## 数据边界
 
 **请勿提交** APK、SO、DEX 转储、完整 logcat、Tombstone、`envc.push`、设备标识、令牌、账号信息或未经审查的诊断 ZIP。公开仓库只保留可公开的分析代码、去标识化结论及校验哈希。此仓库不分发原版商业客户端。
