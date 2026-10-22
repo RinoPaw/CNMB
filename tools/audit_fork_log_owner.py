@@ -66,7 +66,7 @@ def check(data):
             defs.append((pos, u32(data, pos + 24)))
     assert len(defs) == 1
     class_pos, classdata = defs[0]
-    assert class_pos == 0x73edab8
+    assert class_pos == 0x73ecaa8
     methods = dict(decoded_methods(data, base, classdata))
     assert methods[METHOD_ID] == CODE
     code_units = u32(data, CODE + 12)
