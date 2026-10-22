@@ -61,49 +61,6 @@ def summarize_identity(capture):
             "processes": [snapshots[pid] for pid in sorted(snapshots)]}
 
 
-def correlate(capture, lines, window_seconds=WINDOW_SECONDS):
-    identity = summarize_identity(capture)
-    pids = {item["pid"] for item in identity["processes"]}
-    main_pid = identity["main_pid_candidate"]
-    events = parse(lines, capture.get("package"))
-    anchors = [event for event in events
-               if event.get("kind") == "am_proc_start"
-               and event.get("pid") == main_pid]
-    if len(anchors) != 1:
-        return {
-            "identity": identity, "device_log_anchor": None,
-            "logcat_events": [], "process_log_profiles": [],
-            "status": ("no unique am_proc_start for the sampled main PID; "
-                       "refusing to join unrelated logcat sessions")}
-    anchor = device_time(anchors[0]["clock"])
-    start = anchor - timedelta(seconds=2)
-    end = anchor + timedelta(seconds=window_seconds)
-    session_events = [event for event in events
-                      if start <= device_time(event["clock"]) <= end]
-    per_pid_lines = {pid: [] for pid in pids}
-    for line in lines:
-        match = THREADTIME.match(line)
-        if not match:
-            continue
-        pid = int(match.group("logger_pid"))
-        if pid not in pids:
-            continue
-        if start <= device_time(match.group("clock")) <= end:
-            per_pid_lines[pid].append(line)
-    profiles = [profile(per_pid_lines[pid], pid, capture.get("package"))
-                for pid in sorted(pids)]
-    return {
-        "identity": identity,
-        "device_log_anchor": anchors[0]["clock"],
-        "logcat_events": session_events,
-        "process_log_profiles": profiles,
-        "status": ("Correlated by exact main PID and device Logcat window. "
-                   "Host-relative sampling seconds are NOT aligned to "
-                   "device seconds. Parentage is observed, not inferred "
-                   "for PPID=1 workers; no DEC caller is established.")
-    }
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--identity", type=Path, required=True,
@@ -118,8 +75,7 @@ def main():
     # First pass obtains start/death/DEC events; second pass profiles exact PIDs.
     with args.logcat.open("r", encoding="utf-8-sig", errors="replace") as input_file:
         events_only = parse(input_file, capture.get("package"))
-    # Avoid parsing the log twice by supplying the small set of event records
-    # as a cached parse result to the second pass.
+    # Supply compact parsed events to the second pass for PID-specific profiling.
     with args.logcat.open("r", encoding="utf-8-sig", errors="replace") as input_file:
         output = correlate_with_events(capture, events_only, input_file,
                                        args.window_seconds)
