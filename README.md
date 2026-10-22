@@ -84,6 +84,19 @@ python .\experiments\capture_loaded_modules.py --from-json .\loaded-modules-loca
 
 新版工具会跳过空 `maps` 并单独记录采样不可用；若旧版输出已出现全空快照，应视为无效观测，参见分析报告。
 
+### 提取 DEC / 进程 / Native Crash 事件（离线）
+
+保留完整原始日志仅在本地，脚本只输出时间、事件类型和可验证的 PID / 信号信息，不打印原始 Intent 内容：
+
+```powershell
+adb logcat -d -v threadtime -b main -b system -b events -b crash |
+    Set-Content -Encoding utf8 .\CNMB-runtime-logcat-private.txt
+
+python .\experiments\parse_runtime_events.py .\CNMB-runtime-logcat-private.txt
+```
+
+如果原始实验期间的日志已经从 Android 环形缓冲区中被覆盖，必须在下一轮实验重新采集；**当前模块采样仅记录了主机相对时间**，缺少绝对时钟锚点，无法可靠地与旧 Logcat 时间进行亚秒级对齐。
+
 ## 数据边界
 
 **请勿提交** APK、SO、DEX 转储、完整 logcat、Tombstone、`envc.push`、设备标识、令牌、账号信息或未经审查的诊断 ZIP。公开仓库只保留可公开的分析代码、去标识化结论及校验哈希。此仓库不分发原版商业客户端。
