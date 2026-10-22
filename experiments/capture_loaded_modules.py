@@ -172,6 +172,14 @@ def concise_report(result):
                          'state':state})
             continue
         files=event.get('native_and_dex_files',[])
+        if (not files and event.get('anonymous_executable_regions') == 0
+                and event.get('anonymous_rwx_regions') == 0
+                and event.get('memfd_or_ashmem_entries') == 0):
+            # Legacy captures may include a zero-byte /proc/PID/maps read.
+            # A normal Android process has many mappings; classify as invalid.
+            rows.append({'t':event['elapsed_seconds'],'pid':event['pid'],
+                         'state':'invalid_empty_maps_legacy_capture'})
+            continue
         interesting=[name for name in files
                      if name in WATCH_LIBS or 'ZWRisk' in name]
         rows.append({'t':event['elapsed_seconds'],'pid':event['pid'],
