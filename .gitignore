@@ -36,3 +36,6 @@ __pycache__/
 .env
 .env.*
 .DS_Store
+
+# Locally sampled module timelines
+loaded-modules*.json
