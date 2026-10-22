@@ -64,7 +64,7 @@ def profile(lines, pid, package=PACKAGE):
         "first_message_clock": first,
         "last_message_clock": last,
         "tags": dict(sorted(tags.items())),
-        "events": events,
+        "events": sorted(events, key=lambda event: event["clock"]),
         "has_explicit_main_entry_log": any(
             e["kind"] == "explicit_main_entry_log" for e in events),
         "note": ("Only exact logger-PID messages. An absent main entry is "
