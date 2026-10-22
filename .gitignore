@@ -39,3 +39,7 @@ __pycache__/
 
 # Locally sampled module timelines
 loaded-modules*.json
+
+# Raw logcat, including named local collections
+*logcat*.txt
+CNMB-runtime-logcat-private.txt
