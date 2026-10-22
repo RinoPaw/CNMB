@@ -74,7 +74,7 @@ python .\experiments\process_lifetime.py --monitor-only --observe-seconds 25
 python .\experiments\capture_loaded_modules.py --launch --seconds 18 --poll-seconds 0.5 --output .\loaded-modules-local.json
 ```
 
-采样器保留相对时间、PID、映射库的文件名、匿名可执行区统计，不保存完整设备内存映射或绝对安装路径。输出仅在本地保存，不应直接提交原始取证数据。**2026-10-22 已完成首次设备实测。** 原始采样发现与旧 Tombstone 相同字节数的匿名 RWX 区域，同时暴露了旧版脚本误将空 `maps` 判为卸载的问题，已修正。详情见 [ADB 模块映射时间线](docs/2026-10-22-adb-module-timeline.md)。
+采样器保留相对时间、PID、映射库的文件名、匿名可执行区统计，不保存完整设备内存映射或绝对安装路径。输出仅在本地保存，不应直接提交原始取证数据。**2026-10-22 已完成首次设备实测。** 原始采样发现与旧 Tombstone 相同字节数的匿名 RWX 区域，同时暴露了旧版脚本误将空 `maps` 判为卸载的问题，已修正。详情见 [ADB 模块映射时间线](docs/2026-10-22-adb-module-timeline.md)、[应用 UID 下的 RuntimeInit 进程](docs/2026-10-22-app-process-runtime-init.md)。
 
 已经保存的采样可在不连接手机的情况下生成简洁摘要：
 
@@ -93,6 +93,7 @@ adb logcat -d -v threadtime -b main -b system -b events -b crash |
     Set-Content -Encoding utf8 .\CNMB-runtime-logcat-private.txt
 
 python .\experiments\parse_runtime_events.py .\CNMB-runtime-logcat-private.txt
+# 已验证会识别 DEC 事件及具有同 PID 应用身份佐证的 RuntimeInit 启动
 ```
 
 如果原始实验期间的日志已经从 Android 环形缓冲区中被覆盖，必须在下一轮实验重新采集；**当前模块采样仅记录了主机相对时间**，缺少绝对时钟锚点，无法可靠地与旧 Logcat 时间进行亚秒级对齐。
