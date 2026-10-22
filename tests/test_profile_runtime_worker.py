@@ -39,6 +39,8 @@ class WorkerProfileTests(unittest.TestCase):
         result = m.profile(src, 11209)
         self.assertEqual([event["clock"] for event in result["events"]],
                          ["10-22 21:20:15.575", "10-22 21:20:15.578"])
+        self.assertEqual(result["first_message_clock"], "10-22 21:20:15.575")
+        self.assertEqual(result["last_message_clock"], "10-22 21:20:15.578")
 
     def test_explicit_entry_class_only_when_logged(self):
         src = ["10-22 20:23:02.100  9187  9187 D AndroidRuntime: Calling main entry com.example.SampleMain with key=HIDDEN\n"]
