@@ -1,0 +1,48 @@
+# 2026-10-22：应用 UID 下独立 `app_process` / `RuntimeInit` 线索
+
+证据源：用户在本地保存的 `CNMB-runtime-logcat-private.txt` 中按临时进程 PID 检索所得的 2026-10-22 Logcat 文本。此仓库保留精简、脱敏的事件摘要，**不包含原始日志、设备标识或应用私有文件**。时间均为设备日志时间。
+
+## 新观测
+
+同一轮启动中，主进程启动、DEC 弹窗和终止已由 [ADB 映射/事件时间线](2026-10-22-adb-module-timeline.md) 记录。此前记为 D 的临时进程在 DEC 窗口启动之前出现了以下连续日志：
+
+| 设备本地时间 | 脱敏后的观察 |
+|---|---|
+| 20:23:01.083–01.109 | D 的 `app_process`、`ExtensionsLoader` 及 OPPO 扩展框架初始化消息 |
+| **20:23:01.111** | D 的 `AndroidRuntime` 输出 `START com.android.internal.os.RuntimeInit uid <app_uid>` |
+| 20:23:01.115–01.127 | D 的 SELinux 日志字段 `app=<target package>`，提供与中国移动包的身份关联 |
+| 20:23:01.131–02.177 | D 初始化 ART、Android 系统运行时和 `nativeloader` |
+
+该 `RuntimeInit` 日志发生在：
+
+- 主进程 `am_proc_start`（20:22:56.334）后约 **4.777 秒**。
+- `DECMsgDialog` 的启动（20:23:05.609）前约 **4.498 秒**。
+
+这条日志表明：存在属于应用身份的一个进程，执行了 `app_process` 所启动的 Java 运行时初始化。结合 Android 12 的 AOSP 启动框架，独立 app_process 可以选择 `RuntimeInit` 入口；这是**启动机制解释**，还不足以从本机证据识别实际入口 Java 类、启动命令行、父 PID 或调用者。AOSP 参考：
+
+- [`frameworks/base/cmds/app_process/app_main.cpp`](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android12-release/cmds/app_process/app_main.cpp)
+- [`frameworks/base/core/java/com/android/internal/os/RuntimeInit.java`](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android12-release/core/java/com/android/internal/os/RuntimeInit.java)
+
+## 其他候选进程的证据边界
+
+此前记为 B/C 的 PID，在提供的搜索结果中**仅看到** `adbd` 采样器对其 `/proc/PID/maps` 的读取请求。不能据此认定 B/C 执行了 ART、属于 DEC 工作线程或由某个特定父进程创建。
+
+D 的 `Error reading ... boot.art`、`imageless running`、SELinux `avc: denied` 和 OPPO `ExtensionsLoader` 均属于实际日志事实；没有发现将它们与 DEC 风险判定或退出直接相连的调用链。尤其不能将日志中的 `uid`、`scontext` 直接解释成 Root 检测命中。
+
+另外，`adbd service requested '...cat /proc/<PID>/maps'` 是本轮取证命令自身留下的日志，不能把它算成应用自检动作。
+
+## 已纳入的离线验证
+
+`experiments/parse_runtime_events.py` 现在仅在**同一日志 PID** 存在明确 `app=<target package>` 的环境审计记录时，才把 `AndroidRuntime` 的 `RuntimeInit` 启动归属于目标应用。这种关联是一项审慎过滤规则；如果原始日志缺少审计记录，工具会放弃归属，而非猜测。
+
+```powershell
+python .\experiments\parse_runtime_events.py .\CNMB-runtime-logcat-private.txt
+```
+
+预计可额外输出 `app_process_runtime_init` 类型事件；实际是否输出，仍以用户本地完整日志解析结果为准。代码测试采用合成日志，不引入原始用户记录。
+
+## 后续证据需求
+
+先从当前已有日志确认 D 的后续加载与退出阶段；再开展新一轮**纯 ADB** 实验获取短生命周期进程的真实 `PPID`、命令行入口类名及启动/退出时钟。由于旧记录没有保存这些字段，事后无法仅凭 PID 数字恢复父子关系。
+
+目前 `DeviceEnvironmentCheck.startCheck()` 的方法体及调用者归属依然没有直接证据；`app_process` 的独立启动不能自动算作 DEC 的检测执行。
