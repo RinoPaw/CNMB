@@ -1,0 +1,38 @@
+# Proprietary or unpacked client binaries
+*.apk
+*.apks
+*.aab
+*.dex
+*.odex
+*.vdex
+*.so
+*.zip
+*.7z
+*.tar
+*.gz
+
+# Raw device captures and potentially sensitive material
+envc.push
+envc-*
+*-PRIVATE*
+logcat*
+tombstone*
+crash-*
+CNMB-*-crash.txt
+CNMB-*-tombstone.txt
+CNMB-after-reboot.txt
+CNMB-frida*-server-only.txt
+ChinaMobile-APatch-*
+apks/
+dumps/
+captures/
+private/
+data/
+
+# Local development
+.venv*/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+.DS_Store
