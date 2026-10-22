@@ -18,9 +18,9 @@ THREADTIME = re.compile(
     r"(?P<logger_pid>\d+)\s+(?P<tid>\d+)\s+\S+\s+"
     r"(?P<tag>[^:]+):\s*(?P<message>.*)$")
 SIGNAL = re.compile(
-    r"Fatal signal\s+(?P<signal>\d+)\s+\((?P<name>[^)]+)\)"
-    r".*?(?:fault addr\s+(?P<addr>0x[0-9a-fA-F]+))?"
-    r".*?\bpid\s+(?P<pid>\d+)", re.I)
+    r"Fatal signal\s+(?P<signal>\d+)\s+\((?P<name>[^)]+)\)", re.I)
+SIGNAL_ADDR = re.compile(r"\bfault addr\s+(0x[0-9a-fA-F]+)", re.I)
+SIGNAL_PID = re.compile(r"\bpid\s+(\d+)", re.I)
 DEBUG_SIGNAL = re.compile(
     r"signal\s+(?P<signal>\d+)\s+\((?P<name>[^)]+)\).*?"
     r"fault addr\s+(?P<addr>0x[0-9a-fA-F]+)", re.I)
@@ -33,6 +33,7 @@ def parse(line_iter, package=PACKAGE):
     events = []
     # Keep the last debug process PID only while reading one contiguous DEBUG block.
     debug_pid = None
+    potential_signals = []
     for line in line_iter:
         match = THREADTIME.match(line)
         if not match:
@@ -49,14 +50,16 @@ def parse(line_iter, package=PACKAGE):
                 if name == package:
                     event = {"kind": "native_crash_report"
                              if "Native crash" in msg else "crash_report"}
-            elif len(parts) >= 3 and parts[2].startswith(package):
+            elif len(parts) >= 3 and (parts[2] == package or
+                                        parts[2].startswith(package + ":")):
                 # Some versions log [user,pid,process,...]
                 if parts[1].isdigit():
                     event = {"kind": tag, "pid": int(parts[1])}
-            elif len(parts) >= 4 and parts[3].startswith(package):
+            elif len(parts) >= 4 and (parts[3] == package or
+                                        parts[3].startswith(package + ":")):
                 if parts[1].isdigit():
                     event = {"kind": tag, "pid": int(parts[1])}
-        elif tag == "ActivityTaskManager" and ACTIVITY.search(msg):
+        elif tag == "ActivityTaskManager" and ACTIVITY.search(msg) and package in msg:
             kind = ("dec_launch" if "START u" in msg else
                     "dec_displayed" if "Displayed " in msg else
                     "dec_force_finish" if "Force finishing " in msg else None)
@@ -64,10 +67,14 @@ def parse(line_iter, package=PACKAGE):
                 event = {"kind": kind}
         elif tag == "libc" and "Fatal signal" in msg:
             sig = SIGNAL.search(msg)
-            if sig and package in msg:
-                event = {"kind": "fatal_signal", "pid": int(sig.group("pid")),
-                         "signal": sig.group("name"),
-                         "fault_addr": sig.group("addr")}
+            pid = SIGNAL_PID.search(msg)
+            addr = SIGNAL_ADDR.search(msg)
+            if sig and pid:
+                potential_signals.append(
+                    {"clock": clock, "kind": "fatal_signal",
+                     "pid": int(pid.group(1)), "signal": sig.group("name"),
+                     "fault_addr": addr.group(1) if addr else None,
+                     "explicit_package": package in msg})
         # DEBUG signal records lack the process name on the signal line. Only
         # attribute to package if that specific block states the cmdline name.
         elif tag == "DEBUG" and msg.startswith("Cmdline:"):
@@ -83,7 +90,14 @@ def parse(line_iter, package=PACKAGE):
                 debug_pid = None
         if event is not None:
             events.append({"clock": clock, **event})
+    # Native fatal lines often abbreviate process names. Retain them only
+    # when target PID is independently identified by Android process events.
+    target_pids = {ev["pid"] for ev in events if "pid" in ev}
+    for fatal in potential_signals:
+        if fatal.pop("explicit_package") or fatal["pid"] in target_pids:
+            events.append(fatal)
     # De-duplicate exact log lines that can appear across multiple log buffers.
+    events.sort(key=lambda ev: ev["clock"])
     seen = set()
     result = []
     for event in events:
