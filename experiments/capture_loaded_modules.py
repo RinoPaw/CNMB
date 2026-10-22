@@ -191,9 +191,18 @@ def main():
     p.add_argument('--poll-seconds',type=float,default=0.5)
     p.add_argument('--launch',action='store_true',help='force-stop then launch via adb monkey')
     p.add_argument('--output',type=Path,help='save detailed sanitized JSON locally')
+    p.add_argument('--from-json',type=Path,
+                   help='summarize an existing capture, without ADB or relaunch')
     p.add_argument('--full-stdout',action='store_true',
                    help='print detailed JSON instead of a compact summary')
     args=p.parse_args()
+    if args.from_json:
+        if args.output:
+            p.error('--output cannot be combined with --from-json')
+        stored=json.loads(args.from_json.read_text(encoding='utf-8'))
+        print(json.dumps(stored if args.full_stdout else concise_report(stored),
+                         ensure_ascii=False,indent=2))
+        return
     if not SAFE_PACKAGE.fullmatch(args.package):
         p.error('Invalid package name')
     if args.seconds<=0 or not 0.1<=args.poll_seconds<=10:
