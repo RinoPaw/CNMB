@@ -37,13 +37,21 @@ class LoadedModulesTests(unittest.TestCase):
                         'anonymous_rwx_regions': 2,
                         'anonymous_rwx_bytes': 1171456,
                         'memfd_or_ashmem_entries': 7},
-                       {'elapsed_seconds': 12.36, 'pid': 123, 'state': 'not_in_ps'}],
+                       {'elapsed_seconds': 12.36, 'pid': 123,
+                        'native_and_dex_files': [],
+                        'anonymous_executable_regions': 0,
+                        'anonymous_rwx_regions': 0,
+                        'anonymous_rwx_bytes': 0,
+                        'memfd_or_ashmem_entries': 0},
+                       {'elapsed_seconds': 13, 'pid': 123, 'state': 'not_in_ps'}],
             'errors': [], 'note': 'test'
         }
         summary=m.concise_report(sample)
         self.assertEqual(summary['events'][0]['mapped_research_libraries'],
                          ['libDexHelper.so', 'libdatajar.so'])
-        self.assertEqual(summary['events'][1]['state'], 'not_in_ps')
+        self.assertEqual(summary['events'][1]['state'],
+                         'invalid_empty_maps_legacy_capture')
+        self.assertEqual(summary['events'][2]['state'], 'not_in_ps')
         self.assertNotIn('libart.so', str(summary))
 
     def test_empty_maps_does_not_generate_fake_unload(self):
