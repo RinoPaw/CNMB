@@ -12,7 +12,6 @@ import threading
 import time
 from pathlib import Path
 
-import frida
 
 PACKAGE = 'com.greenpoint.android.mc10086.activity'
 
@@ -122,10 +121,10 @@ def main():
                         help='Only measure launch and process lifetime; do not connect Frida or attach')
     parser.add_argument('--observe-seconds', type=float, default=20,
                         help='How long to monitor in --monitor-only mode (default: 20s)')
-    parser.add_argument('--trace', action='store_true', help='Load CNMB-DEC-Trace.js after attach')
+    parser.add_argument('--trace', action='store_true', help='Load bundled dec_trace.js after attach')
     parser.add_argument('--script', type=Path, help='Load a specified Frida JavaScript file')
     args = parser.parse_args()
-    script_file = args.script or (Path('CNMB-DEC-Trace.js') if args.trace else None)
+    script_file = args.script or (Path(__file__).with_name('dec_trace.js') if args.trace else None)
     if args.monitor_only and script_file:
         parser.error('--monitor-only cannot be combined with --trace or --script')
     if script_file and not script_file.is_file():
@@ -138,6 +137,7 @@ def main():
     else:
         print('[1/4] Connecting to Frida before launching target...', flush=True)
         try:
+            import frida
             device = frida.get_usb_device(timeout=10)
             print(f'Device: {device.name}', flush=True)
         except Exception as exc:
