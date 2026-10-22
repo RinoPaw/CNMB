@@ -36,8 +36,8 @@ def profile(lines, pid, package=PACKAGE):
         clock, tag, msg = (match.group("clock"),
                            match.group("tag").strip(),
                            match.group("message"))
-        first = first or clock
-        last = clock
+        first = min(first, clock) if first is not None else clock
+        last = max(last, clock) if last is not None else clock
         count += 1
         tags[tag] += 1
         if tag == "AndroidRuntime" and "START com.android.internal.os.RuntimeInit uid" in msg:
