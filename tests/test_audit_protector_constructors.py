@@ -39,6 +39,26 @@ def config(data):
 
 
 class ConstructorTests(unittest.TestCase):
+    def test_identical_bootstrap_suffix_and_prior_mismatch(self):
+        helper = bytearray(0x4ca0)
+        jni = bytearray(0x2ca0)
+        ha, hz = m.SHARED_BOOTSTRAP["DexHelper_range"]
+        ja, jz = m.SHARED_BOOTSTRAP["dexjni_range"]
+        helper[ha-1] = 1
+        for marker, offset in ((b"JNI_OnLoad", 0x49f8),
+                               (b"/proc/self/maps", 0x4a08)):
+            helper[offset:offset+len(marker)] = marker
+            shifted = offset-0x2000
+            jni[shifted:shifted+len(marker)] = marker
+        from unittest.mock import patch
+        digest = hashlib.sha256(helper[ha:hz]).hexdigest()
+        with patch.dict(m.SHARED_BOOTSTRAP, {"sha256": digest}):
+            result = m.compare_bootstrap(helper, jni)
+            self.assertEqual(result["identical_executable_segment_suffix_bytes"], 9030)
+            jni[ja+100] ^= 1
+            with self.assertRaisesRegex(ValueError, "suffix mismatch"):
+                m.compare_bootstrap(helper, jni)
+
     def test_init_and_fini_relative_relocations(self):
         b = fixture()
         report = m.inspect(b, "libdexjni.so", config(b))
