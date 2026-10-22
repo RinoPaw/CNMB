@@ -30,6 +30,16 @@ class WorkerProfileTests(unittest.TestCase):
         self.assertNotIn("SECRET", str(out))
         self.assertNotIn("9087", str(out))
 
+    def test_timestamp_order_even_when_log_file_is_out_of_order(self):
+        src = [
+            "10-22 21:20:15.578  11209  11209 E app_process: Could not create image space\n",
+            "10-22 21:20:15.575  11209  11209 I auditd: avc: denied app="
+            + m.PACKAGE + "\n",
+        ]
+        result = m.profile(src, 11209)
+        self.assertEqual([event["clock"] for event in result["events"]],
+                         ["10-22 21:20:15.575", "10-22 21:20:15.578"])
+
     def test_explicit_entry_class_only_when_logged(self):
         src = ["10-22 20:23:02.100  9187  9187 D AndroidRuntime: Calling main entry com.example.SampleMain with key=HIDDEN\n"]
         out = m.profile(src, 9187)
