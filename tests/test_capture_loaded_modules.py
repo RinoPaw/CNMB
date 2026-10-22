@@ -70,8 +70,8 @@ class LoadedModulesTests(unittest.TestCase):
             if 'maps' in args[-1]:
                 calls['maps'] += 1
                 if calls['maps'] == 1:
-                    return ('75aa6b8000-75aa7d2000 rwxp 0 00:00 0\\n'
-                            '75afe0b000-75afe10000 r-xp 0 00:00 0 /data/app/secret/libDexHelper.so\\n')
+                    return ('75aa6b8000-75aa7d2000 rwxp 0 00:00 0\n'
+                            '75afe0b000-75afe10000 r-xp 0 00:00 0 /data/app/secret/libDexHelper.so\n')
                 return ''  # Android may return an empty map during process exit
             raise AssertionError(args)
         with patch.object(m, 'run_adb', side_effect=adb), \
