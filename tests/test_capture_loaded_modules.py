@@ -28,3 +28,50 @@ class LoadedModulesTests(unittest.TestCase):
         self.assertEqual(value['anonymous_rwx_regions'], 1)
         self.assertEqual(value['anonymous_rwx_bytes'], 0x11a000)
         self.assertNotIn('secret', str(value))
+
+    def test_compact_report_shows_only_research_libraries(self):
+        sample = {
+            'package': m.PACKAGE, 'duration_seconds': 18,
+            'events': [{'elapsed_seconds': 0.35, 'pid': 123,
+                        'native_and_dex_files': ['libart.so','libDexHelper.so','libdatajar.so'],
+                        'anonymous_rwx_regions': 2,
+                        'anonymous_rwx_bytes': 1171456,
+                        'memfd_or_ashmem_entries': 7},
+                       {'elapsed_seconds': 12.36, 'pid': 123, 'state': 'not_in_ps'}],
+            'errors': [], 'note': 'test'
+        }
+        summary=m.concise_report(sample)
+        self.assertEqual(summary['events'][0]['mapped_research_libraries'],
+                         ['libDexHelper.so', 'libdatajar.so'])
+        self.assertEqual(summary['events'][1]['state'], 'not_in_ps')
+        self.assertNotIn('libart.so', str(summary))
+
+    def test_empty_maps_does_not_generate_fake_unload(self):
+        from unittest.mock import patch
+        class Clock:
+            t = 0.0
+            def now(self):
+                return self.t
+            def sleep(self, delta):
+                self.t += delta
+        clock = Clock()
+        calls = {'maps': 0}
+        def adb(*args, **kwargs):
+            if args[-3:] == ('-o', 'PID,NAME') and 'ps' in args:
+                return ('123 '+m.PACKAGE) if clock.t < 2 else 'PID NAME'
+            if 'maps' in args[-1]:
+                calls['maps'] += 1
+                if calls['maps'] == 1:
+                    return ('75aa6b8000-75aa7d2000 rwxp 0 00:00 0\\n'
+                            '75afe0b000-75afe10000 r-xp 0 00:00 0 /data/app/secret/libDexHelper.so\\n')
+                return ''  # Android may return an empty map during process exit
+            raise AssertionError(args)
+        with patch.object(m, 'run_adb', side_effect=adb), \
+             patch.object(m.time, 'monotonic', side_effect=clock.now), \
+             patch.object(m.time, 'sleep', side_effect=clock.sleep):
+            result = m.observe(m.PACKAGE, duration=3, interval=1)
+        self.assertEqual(len(result['events']), 2, result['events'])
+        self.assertEqual(result['events'][0]['anonymous_rwx_bytes'], 0x11a000)
+        self.assertEqual(result['events'][1]['state'], 'not_in_ps')
+        self.assertEqual(result['errors'][0]['kind'], 'maps-empty')
+        self.assertNotIn('native_and_dex_files', result['events'][1])
