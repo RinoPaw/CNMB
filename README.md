@@ -11,7 +11,7 @@
 - `libdatajar.so` 含 `DeviceEnvironmentCheck`、`DECApp`、`RootBeer` 等类描述符；目前**没有恢复其受保护方法体**。
 - 在 OPPO CPH2127 / Android 12 上，干净重启后的 DEC 弹窗与 Frida 服务端运行时的原生崩溃属于两类不同的观测结果。崩溃的具体触发代码尚未定位。
 
-详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
+详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
 
 ## 复核
 
@@ -23,6 +23,22 @@ python .\tools\offline_audit.py .\path\to\base.apk
 ```
 
 脚本只读输入文件，并输出 APK 哈希、加固启动桩、相关 Manifest 组件及明文字符串命中。
+
+### SecNeo 受保护 Dex 的局部恢复
+
+对 12.5.5 原始 `libdatajar.so`，已验证 64,327 个连续 Dex 字符串索引、类型/原型/字段/方法 ID 表，以及这条调用链：
+
+```text
+DECApp.onCreate()
+  -> DECApp.intiDECabcOnCreate(...)
+  -> DeviceEnvironmentCheck.startCheck()
+```
+
+`startCheck` 的方法体尚未恢复。用只读工具复核（会严格检查样本 SHA-256）：
+
+```powershell
+python .\\tools\\inspect_dec_tables.py .\\path\\to\\base.apk
+```
 
 ## 实验脚本
 
