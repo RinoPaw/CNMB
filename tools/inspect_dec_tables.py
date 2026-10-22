@@ -187,11 +187,22 @@ def main():
     definition = class_def(dec)
     assert definition is not None
     codes = class_methods(definition[1])
-    for src, dst in ((62489, 62487), (62487, 62496)):
+    for src, dst in ((62489, 62487), (62487, 62488), (62487, 62496)):
         hits = static_invokes(codes[src], dst)
         assert len(hits) == 1, ("invoke-static", src, dst, hits)
         print(f"{method(src)[1]} -> {type_name(checker) if dst==62496 else 'DECApp'}."
               f"{method(dst)[1]}: invoke-static @SO {hits[0]:#x}, method_id={dst}")
+    # Confirm exact aligned Dalvik if-nez + return-void sequence.
+    # It appears after the boolean-producing isMainProcessDECabc call.
+    init_pos = BASE+codes[62487]
+    insn_size = u32(data, init_pos+12)
+    instrs = data[init_pos+16:init_pos+16+2*insn_size]
+    gate = bytes.fromhex("39 00 03 00 0e 00")
+    gate_positions = [i for i in range(0, len(instrs)-len(gate)+1, 2)
+                      if instrs[i:i+len(gate)] == gate]
+    assert gate_positions == [84], gate_positions
+    print(f"DECApp main-process gate: if-nez v0, +3 / return-void"
+          f" @SO {init_pos+16+gate_positions[0]:#x}")
     assert class_def(checker) is None
     print("No DeviceEnvironmentCheck class definition in this fragment; "
           "startCheck body and Root verdict remain unknown.")
