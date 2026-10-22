@@ -48,6 +48,26 @@ class RuntimeEventTests(unittest.TestCase):
             {"clock": "10-22 15:50:00.000", "kind": "native_crash_report"}])
         self.assertNotIn("pid", got[0])
 
+    def test_runtime_init_requires_matching_app_audit(self):
+        lines = [
+            "10-22 20:23:01.111  9187  9187 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 10250 <<<<<<\n",
+            "10-22 20:23:01.115  9187  9187 I auditd: type=1400 audit(...) avc: denied app=" + PKG + "\n",
+            "10-22 20:23:02.000  9999  9999 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 9999 <<<<<<\n",
+            "10-22 20:23:02.005  9999  9999 I auditd: type=1400 avc: denied app=com.other.application\n",
+            "10-22 20:23:02.100  8971  8971 I adbd: shell,v2,raw:su -c cat /proc/9187/maps\n",
+        ]
+        got = module.parse(lines)
+        self.assertEqual(got, [
+            {"clock": "10-22 20:23:01.111",
+             "kind": "app_process_runtime_init", "pid": 9187, "uid": 10250}])
+        self.assertNotIn("com.other.application", str(got))
+
+    def test_runtime_init_without_audit_is_unattributed(self):
+        lines = [
+            "10-22 20:23:01.111  9187  9187 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 10250 <<<<<<\n",
+        ]
+        self.assertEqual(module.parse(lines), [])
+
     def test_deduplicate_exact_lines(self):
         line = f"10-22 15:42:22.000  1874  2222 I am_proc_died: [0,9069,{PKG},955,19]\n"
         self.assertEqual(len(module.parse([line, line])), 1)
