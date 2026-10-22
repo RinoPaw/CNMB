@@ -12,6 +12,8 @@
 - `DeviceEnvironmentCheck.startCheck()` 的方法体仍未定位：14 组片段中其类只有引用、没有定义；`RootBeer` 在对应片段中没有外部直接调用点，**尚无证据表明它触发 DEC 警告**。
 - 原版另含 ZIP 包装的 `libZWRiskComm` 风险 SDK，内层 ELF 有确切反 Frida 字符串；目前未证明它介入 DEC。`0x978` 崩溃 Tombstone 记录到 `libDexHelper.so` 和匿名 `rwx` 映射，但缺失原生代码归属证据。
 - 在 OPPO CPH2127 / Android 12 上，干净重启后的 DEC 弹窗与 Frida 服务端运行时的原生崩溃属于两类不同的观测结果。崩溃的具体触发代码尚未定位。
+- 两轮独立实测都观察到额外 `app_process / RuntimeInit` 在主进程启动约 **4.75 秒**后初始化；第二轮通过 PPID 证实主进程至少有两个直接子进程，另有一进程在首次采样时 PPID 已为 1。两轮随后均显示 DEC 警告并结束主进程，**时间相关性尚不足以证明检测调用**。
+- 先前原版 SO 中的 `forked from pid:` 及 `Current process is forked from` 已通过 Dex 方法归属和指令核实：它们属于支付宝 `CrashBridge.isForkedCrashOnlyForTracing` 的日志文本解析逻辑，不能作为 SecNeo 创建子进程的证据。
 
 详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[14 组 Dex 元数据扫描](docs/12.5.5-fourteen-dex-census.md)；[原生加载与崩溃阶段](docs/12.5.5-native-loader-crash-stage.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
 
@@ -46,6 +48,7 @@ python .\tools\audit_dec_callers.py .\path\to\base.apk
 python .\tools\inspect_cmcc_dec_bridge.py .\path\to\base.apk
 python .\tools\inspect_rootbeer.py .\path\to\base.apk
 python .\tools\carve_all_dex.py .\path\to\base.apk
+python .\tools\audit_fork_log_owner.py .\path\to\base.apk
 ```
 
 ### 原生加载阶段检查（离线）
