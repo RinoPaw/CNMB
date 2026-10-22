@@ -1,6 +1,6 @@
 # 2026-10-22：ADB-only 原生库映射时间线实测
 
-来源：用户在 OPPO CPH2127 / Android 12 上执行 `experiments/capture_loaded_modules.py --launch --seconds 18 --poll-seconds 0.5 --output loaded-modules-local.json` 的**终端输出**。本公开记录只保留相对时间与去标识化 PID 代号；原始 JSON 留在用户本地，不上传至仓库。
+来源：用户在 OPPO CPH2127 / Android 12 上执行 `experiments/capture_loaded_modules.py --launch --seconds 18 --poll-seconds 0.5 --output loaded-modules-local.json` 的**终端输出**。本公开记录只保留相对时间与去标识化 PID 代号；原始 JSON 留在用户本地，不上传至仓库。**2026-10-22 后续校对：以用户运行 `--from-json` 的完整精简输出为准，已纠正 +1.42 秒 PID C 的库映射，并补齐 +2.33/+3.23 秒采样记录。**
 
 ## 实测关键数据
 
@@ -9,17 +9,19 @@
 | +0.35 s | A | `libDexHelper.so`, `libdatajar.so` | 2 | 1,171,456 |
 | +0.44 s | B | `libDexHelper.so` | 1 | 1,155,072 |
 | +1.22 s | A | `libDexHelper.so`, `libdatajar.so` | 2 | 1,171,456 |
-| +1.42 s | C | `libDexHelper.so`, `libdatajar.so` | 2 | 1,171,456 |
+| +1.42 s | C | `libDexHelper.so` | 2 | 1,171,456 |
+| +2.33 s | A | `libDexHelper.so`, `libdatajar.so` | 2 | 1,171,456 |
+| +3.23 s | A | `libDexHelper.so`, `libdatajar.so` | 2 | 1,171,456 |
 | +4.46 s | D | `libDexHelper.so`, `libdatajar.so` | 2 | 1,171,456 |
 | +12.36 s | A | **不可判定：读取结果为空** | **无效观测** | **无效观测** |
 
-A/C/D 的匿名 RWX 内存总量比 B 多 **16,384 B**。此前独立的 `SIGSEGV 0x978` Tombstone 里，`x19` 所在匿名 RWX 映射恰好也是 **1,155,072 B**。**数值一致仅构成结构线索**：不同启动轮次、不同 PID 的映射没有地址/内容身份对应关系，不能推断它们是同一份代码，也不能断定属于 SecNeo 或 Frida。
+A/C/D 的匿名 RWX 内存总量比 B 多 **16,384 B**；这里 C 在 1.42 秒时只映射了 `libDexHelper.so`，因此不能把 RWX 体积增加直接归因于 `libdatajar.so`。此前独立的 `SIGSEGV 0x978` Tombstone 里，`x19` 所在匿名 RWX 映射恰好也是 **1,155,072 B**。**数值一致仅构成结构线索**：不同启动轮次、不同 PID 的映射没有地址/内容身份对应关系，不能推断它们是同一份代码，也不能断定属于 SecNeo 或 Frida。
 
-每次有效快照均能看到 `libDexHelper.so`；A/C/D 还能看到 `libdatajar.so`。**这确认文件被映射进入进程地址空间**，尚不能证明任一片段的 Dex 方法体已经解密并执行。
+每次有效快照均能看到 `libDexHelper.so`；仅 A 和 D 的列出快照确认有 `libdatajar.so`。**这确认文件被映射进入进程地址空间**，尚不能证明任一片段的 Dex 方法体已经解密并执行。
 
 在此次已给出的快照中，未观察到 `libdexjni.so`、`libdexvmp.so`、`libZWRiskComm*`；采样是间歇性的，不能以此证明它们在整个运行期间从未加载。
 
-进程 A 最后的 `native_and_dex_files=[]`、RWX 计数 0：经工具审计发现，是旧版采样器将**空的 /proc/PID/maps 读取结果**当成正常地图的结果。可能是退出/僵尸状态的瞬态，但这份 JSON 无法证明具体原因。正确表示为 **maps-empty / 不可用快照**，不能声称应用突然卸载了所有系统库。
+进程 A 在 +12.36 秒出现的 `native_and_dex_files=[]`、RWX 计数 0：经工具审计发现，是旧版采样器将**空的 /proc/PID/maps 读取结果**当成正常地图的结果。可能是退出/僵尸状态的瞬态，但这份 JSON 无法证明具体原因。正确表示为 **maps-empty / 不可用快照**，不能声称应用突然卸载了所有系统库。
 
 ## 当前实验的边界
 
