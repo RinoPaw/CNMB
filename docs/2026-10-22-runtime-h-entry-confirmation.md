@@ -40,3 +40,25 @@ python .\experiments\profile_runtime_worker.py .\CNMB-after-reboot.txt --pid 871
 ```
 
 输出应包含 `has_explicit_main_entry_log=true` 和 `class_name=com.secneo.apkwrapper.H`；该观察只归属于这一份日志及其 PID。不要把未经审查的完整 Logcat、Tombstone 或私有文件提交到公开仓库。
+
+
+## 同轮主进程路由证据及自动化复核（2026-10-24）
+
+在上述原始日志的 DEC 启动请求之后，另有两条记录：
+
+- **15:26:03.920**：OPPO 的 `OplusZoomWindowManagerService` 在目标包的 `sourceStack` 中记录 `callingPid: 8387`，且 UID 与目标 App 一致。该字段来自厂商扩展日志，属于当时活动/窗口路由的佐证，不能取代 Binder 调用栈或对 `DECMsgDialog` 调用者的指令级证明。
+- **15:26:03.948**：`ActivityTaskManager` 提示目标应用的主进程已存在，并返回其 PID **8387**。这证明同一时间系统重用了正在运行的主进程，也不能单独识别发起窗口请求的 Java 方法。
+
+这轮 `H` Java 主入口调用至 DEC 启动相差 **2.939 秒**，`H` 所在 PID 的 `Shutting down VM` 至 DEC 启动相差 **0.927 秒**。`Shutting down VM` 属于日志中的阶段标志，不等于已验证的精确进程死亡时刻。
+
+新增完全离线、只读工具 [`experiments/correlate_reboot_h_entry.py`](../experiments/correlate_reboot_h_entry.py) 把以下证据放在同一设备日志日和启动窗口内交叉校验：`ActivityManager Start proc` 的主进程 PID/UID，另一 PID 的 `RuntimeInit` UID、SELinux `app=<目标包>`、显式 `H` 入口，`ActivityTaskManager` 的 DEC 请求与 UID，以及可选的厂商窗口 `callingPid`。
+
+运行：
+
+~~~powershell
+python .\experiments\correlate_reboot_h_entry.py .\CNMB-after-reboot.txt
+~~~
+
+工具仅输出经限制的进程身份、时刻、时间差和归属边界；不会打印 Intent 附加数据、原始审计日志、设备文件路径或任意命令行。检测到多个候选启动会话、缺失启动锚点或缺少同 PID 的应用身份佐证时返回 `ambiguous` 或 `insufficient`，避免把不同启动轮次拼接。测试 [`test_correlate_reboot_h_entry.py`](../tests/test_correlate_reboot_h_entry.py) 使用纯合成日志覆盖日志重复、错 PID、错 UID、跨会话与跨日边界。
+
+**证据尚未闭合的部分**：实际父子 PID 创建关系、`fork/execl` 的运行时调用者、`H` 与主进程之间传输的数据、是否影响 DEC 风险判定。这些只能依靠原版代码调用链或进一步定向运行时采样回答。
