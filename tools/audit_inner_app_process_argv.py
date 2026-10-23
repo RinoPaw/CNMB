@@ -13,7 +13,7 @@ import struct
 import zipfile
 from pathlib import Path
 
-from audit_nested_elf import APK_SHA, SAMPLES, recover, bl_target
+from audit_nested_elf import APK_SHA, SAMPLES, recover, bl_target, app_process_path
 
 # Original ARM64 instructions in the recovered DexHelper inner ELF.
 INSTRUCTIONS = {
@@ -31,6 +31,22 @@ INSTRUCTIONS = {
     0x5a3b8: 0x39400108,  # table[0x00]
     0x5a3bc: 0x39017bff,  # zero terminator at sp+0x5e
     0x5a3f4: 0x52800401,  # mov w1,#0x20 (pipe descriptor formatter)
+    0x5a404: 0x97fee2bf,  # formatter for the pipe descriptor
+    0x5a40c: 0x97fed471,  # strdup of formatted pipe descriptor
+    0x5a410: 0xf9420eb5,  # ldr x21,[x21,#0x418] (runtime context)
+    0x5a4f4: 0x910382b6,  # add x22,x21,#0xe0 (runtime Java entry candidate)
+    0x5a570: 0x528d4ca8,  # mov w8,#0x6a65
+    0x5a574: 0x72a00e08,  # movk w8,#0x70
+    0x5a588: 0x528d2c48,  # mov w8,#0x6962 ('bi')
+    0x5a590: 0x52800dc8,  # mov w8,#0x6e ('n')
+    0x5a59c: 0x72a7aca8,  # movk w8,#0x3d65 ('e=')
+    0x5a664: 0x528c8cc8,  # mov w8,#0x6466 ('fd')
+    0x5a66c: 0x52800e68,  # mov w8,#0x73 ('s')
+    0x5a684: 0x5285a5a9,  # mov w9,#0x2d2d ('--')
+    0x5a68c: 0x72ad8cc9,  # movk w9,#0x6c66 ('fl')
+    0x5a694: 0x528cec29,  # mov w9,#0x6761 ('ag')
+    0x5a6dc: 0x913acc00,  # add x0,x0,#0xeb3 (CLASSPATH)
+    0x5a6e8: 0x97fed32a,  # bl setenv@plt
     0x5a598: 0x528dac28,  # mov w8,#0x6d61 (appended 'ame=')
     0x5a5a4: 0xb9015be8,  # str w8,[sp,#0x158]
     0x5a658: 0x97ff2a63,  # bl sprintf-like checked formatter
@@ -116,8 +132,9 @@ def decode_argv(elf):
             b"/system/bin",b"--nice-name=zygote",b"--write-fd",b"--flags"):
         raise ValueError("Process argument reconstruction changed")
     # x4 is sourced from x21+0xe0, runtime-owned state: its value is unknown.
+    original_path = app_process_path(elf)
     return {
-        "path": "/system/bin/app_process",
+        "path": original_path,
         "execl_elf_va": "0x5a710",
         "arguments": [
             {"source": "x0", "value": "/system/bin/app_process", "role": "path"},
