@@ -15,7 +15,7 @@ spec.loader.exec_module(m)
 
 
 def fixture():
-    b = bytearray(m.EH_FRAME_FILE_OFFSET + 0x1fe8)
+    b = bytearray(m.EH_FRAME_FILE_OFFSET + max(m.FDE_EXPECTED) + 0x40)
     for addr, word in {**m.JNI_CALL_REGISTRATION,
                        **m.REGISTRATION, **m.THREAD_CREATION,
                        **m.WORKER_START}.items():
