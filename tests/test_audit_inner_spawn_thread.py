@@ -16,7 +16,7 @@ spec.loader.exec_module(m)
 
 def fixture():
     b = bytearray(m.EH_FRAME_FILE_OFFSET + max(m.FDE_EXPECTED) + 0x40)
-    for addr, word in {**m.JNI_CALL_REGISTRATION,
+    for addr, word in {**m.JNI_CALL_REGISTRATION, **m.CONFIG_FLAG_ORIGIN,
                        **m.REGISTRATION, **m.INITIALIZER_THREAD,
                        **m.CALLBACK_DISPATCH, **m.THREAD_CREATION,
                        **m.WORKER_START}.items():
@@ -54,10 +54,22 @@ class InnerSpawnThreadTests(unittest.TestCase):
             result["pthread_create"]["thread_start_function"], "0x59700")
         self.assertEqual(result["dispatcher_thread"]["entry_function"], "0x4b3bc")
         self.assertEqual(result["dispatcher_thread"]["callback_bit_mask"], "0x04")
+        self.assertEqual(
+            result["dispatcher_thread"]["flag_bit_0x04_source_rule"],
+            "runtime_config[0x4a] != 0")
         self.assertEqual(result["dispatcher_thread"]["indirect_call"], "0x4b494")
         self.assertEqual(
             result["thread_worker"]["starts_with_sleep_seconds"], 2)
         self.assertEqual(result["direct_immediate_bl_to_worker_count"], 0)
+
+    def test_config_byte_selects_callback_bit_in_initializer(self):
+        # CSEL with w10 bit 4 clear, w11=w10|5, then optional OR 0x40.
+        for initial in (0, 11, (-117 & 0xffffffff)):
+            self.assertEqual(initial & 4, 0)
+            for value in (0, 1, 17, 255):
+                flags = initial if value == 0 else initial | 5
+                flags |= 0x40
+                self.assertEqual(bool(flags & 4), value != 0)
 
     def test_dispatcher_slot_selection_by_single_config_bit(self):
         for flags in (0, 1, 2, 8, 0x80):
