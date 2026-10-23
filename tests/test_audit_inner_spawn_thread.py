@@ -16,12 +16,14 @@ spec.loader.exec_module(m)
 
 def fixture():
     b = bytearray(m.EH_FRAME_FILE_OFFSET + 0x1fe8)
-    for addr, word in {**m.REGISTRATION, **m.THREAD_CREATION,
+    for addr, word in {**m.JNI_CALL_REGISTRATION,
+                       **m.REGISTRATION, **m.THREAD_CREATION,
                        **m.WORKER_START}.items():
         struct.pack_into("<I", b, addr, word)
     for off, (lo, hi) in m.FDE_EXPECTED.items():
         record = m.EH_FRAME_FILE_OFFSET + off
-        struct.pack_into("<IIiI", b, record, 0x2c, off+4,
+        struct.pack_into("<IIiI", b, record,
+                         0x34 if off == 0x32c8 else 0x2c, off+4,
                          lo-(record+8), hi-lo)
     return b
 
@@ -32,6 +34,7 @@ class InnerSpawnThreadTests(unittest.TestCase):
         self.assertEqual(frames["0x1fb0"], ["0x59700", "0x5b45c"])
         self.assertEqual(frames["0x1cc8"], ["0x4e1c8", "0x50354"])
         self.assertEqual(frames["0x788"], ["0x148cc", "0x1703c"])
+        self.assertEqual(frames["0x32c8"], ["0x1df7c", "0x249d0"])
 
     def test_callback_table_and_pthread_registration_signature(self):
         b = fixture()
@@ -40,6 +43,9 @@ class InnerSpawnThreadTests(unittest.TestCase):
             "arguments": [{"role": "nice_name", "value": "--nice-name=zygote"}]
         }):
             result = m.verify(b)
+        self.assertEqual(
+            result["jni_bootstrap"]["callback_registration_initializer"],
+            "0x1df7c")
         self.assertEqual(
             result["global_registration"]["callback_function"], "0x4e1c8")
         self.assertEqual(
