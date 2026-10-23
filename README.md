@@ -15,6 +15,7 @@
 - 两轮独立实测都观察到额外 `app_process / RuntimeInit` 在主进程启动约 **4.75 秒**后初始化；第二轮通过 PPID 证实主进程至少有两个直接子进程，另有一进程在首次采样时 PPID 已为 1。两轮随后均显示 DEC 警告并结束主进程，**时间相关性尚不足以证明检测调用**。
 - 原版 ELF 的 `libDexHelper.so` `DT_INIT_ARRAY` 经重定位指向 `0x4780` 构造函数；它与 `libdexjni.so` 的可执行段末尾共享 9,030 字节（两库偏移差 `0x2000`）。该构造函数含回溯查找 ELF 头的真实指令；尚未证明它执行 DEC 检测。
 - **原版受保护内层 ELF 已成功离线复原。** 内层 `libDexHelper.so` 导入 `fork/execl`，已确认 `JNI_OnLoad:0x16990` 调用注册函数 `0x1DF7C`，把 `0x4E1C8` 写入回调表；该回调函数具备 `pthread_create(…,0x59700,…)` 调用，线程入口内执行双重 `fork` 和 `execl("/system/bin/app_process",…)`。已恢复 `--nice-name=zygote`、`--write-fd`、`--flags 0` 等实际参数；Java 主类值仍未知。现已恢复回调表的分发线程及条件：初始化配置字段 `+0x4A` 非零时设置位 `0x04`，分发线程调用回调表 `+0x20` 槽，静态路径闭合至双重 `fork`；实际配置值与设备 PID 对应仍需验证。
+- **辅助 `app_process` 默认 Java 主类已恢复**：原版内层 ELF 的逐字节构造及堆对象字段数据流证明，默认入口为 `com.secneo.apkwrapper.H`；同一对象 `+0xE0` 字符串被作为 `execl` 的 `x4` 参数。运行时 `config+0x200/+0x208` 允许覆盖，设备实际主类仍需独立确认。验证工具：[原版入口与参数审计](tools/audit_inner_java_entry.py)。
 - **原版内置配置值已验证**：`JNI_OnLoad` 使用 XOR `0xAC` 解码 MessagePack 配置，其第 15 项（流偏移 `+63`）为 `true`，经 `0x14C2C` 写入静态配置 `+0x4A`。后续初始化器的 `+0x4A` 字段来源于另一运行时指针，复制或修改关系仍待核实，不能直接推定实际运行中的标志值。工具：[MessagePack 配置审计](tools/audit_inner_spawn_config.py)。
 - 已通过原版 PLT/JUMP_SLOT 精确证明构造函数使用 `dlopen("libc.so",2)` 和 `dlsym("sscanf")`，随后进入 `0x33f8`，通过 `fopen/fgets/sscanf` 解析 `/proc/self/maps`，再执行原生内存映射/权限配置流程。此链属于原版装载行为；尚未定位 DEC 检测条件。
 - 原版 APK 全部 191 份 ARM64 SO 中，**174 份**含逐字节相同的 2,564 B 装载辅助核心（其中 10 份多匹配一个字节），附带 `/proc/self/maps`、`mprotect(RWX)`、缓存刷新及九条系统调用封装；该段还有 `__b_a_n_g_c_l_e__check1234567_` 原版签名。此为**共用保护代码证据**，尚未与 DEC 判定建立调用关系。
@@ -64,6 +65,7 @@ python .\tools\audit_nested_elf.py .\path\to\base.apk
 python .\tools\audit_inner_app_process_argv.py .\path\to\base.apk
 python .\tools\audit_inner_spawn_thread.py .\path\to\base.apk
 python .\tools\audit_inner_spawn_config.py .\path\to\base.apk
+python .\tools\audit_inner_java_entry.py .\path\to\base.apk
 ```
 
 ### 原生加载阶段检查（离线）
