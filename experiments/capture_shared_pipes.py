@@ -32,7 +32,7 @@ for pid in %(pids)s; do
       pipe:\[*\])
         fd=${path##*/}
         inode=${target#pipe:[}
-        inode=${inode%]}
+        inode=${inode%%]}
         flags=$(sed -n 's/^flags:[[:space:]]*//p' "/proc/$pid/fdinfo/$fd" 2>/dev/null)
         [ -n "$flags" ] || flags=-
         printf '%%s %%s %%s %%s\\n' "$pid" "$fd" "$inode" "$flags"
