@@ -12,7 +12,11 @@ import re
 
 from parse_runtime_events import PACKAGE, THREADTIME
 
-MAIN_ENTRY = re.compile(r"\bCalling main entry\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)")
+# AndroidRuntime logs Java class names in dotted or slash-separated form.
+# Normalize both to the same dotted class name in our privacy-limited output.
+MAIN_ENTRY = re.compile(
+    r"\bCalling main entry\s+"
+    r"([A-Za-z_$][\w$]*(?:[./][A-Za-z_$][\w$]*)+)(?![./\w$])")
 LOAD_LIBRARY = re.compile(r"\bLoad\s+(lib[A-Za-z0-9_@.\-]+\.so)\s+using\b")
 MAX_EVENTS = 100
 
@@ -56,7 +60,8 @@ def profile(lines, pid, package=PACKAGE):
         if tag == "AndroidRuntime":
             main = MAIN_ENTRY.search(msg)
             if main:
-                add(clock, "explicit_main_entry_log", class_name=main.group(1))
+                add(clock, "explicit_main_entry_log",
+                    class_name=main.group(1).replace("/", "."))
         if tag == "libc" and "Fatal signal" in msg:
             add(clock, "native_fatal_signal")
     return {
