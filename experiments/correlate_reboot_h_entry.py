@@ -169,8 +169,18 @@ def main():
     args = p.parse_args()
     if not 1 <= args.window_seconds <= 120:
         p.error("window must be 1..120 seconds")
-    with args.logcat.open("r", encoding="utf-8-sig", errors="replace") as source:
-        result = correlate(source, window_seconds=args.window_seconds)
+    try:
+        with args.logcat.open("r", encoding="utf-8-sig", errors="replace") as source:
+            result = correlate(source, window_seconds=args.window_seconds)
+    except FileNotFoundError:
+        p.error(
+            f"Logcat file not found: {args.logcat}. "
+            "Raw CNMB-after-reboot.txt is intentionally excluded from Git "
+            "because it may contain private device data. Use your local "
+            "copy or pass its absolute path."
+        )
+    except (PermissionError, IsADirectoryError) as exc:
+        p.error(f"Cannot read logcat file {args.logcat}: {exc.strerror}")
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
