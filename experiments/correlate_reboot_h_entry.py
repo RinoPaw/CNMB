@@ -41,7 +41,7 @@ def seconds(later, earlier):
 
 
 def correlate(lines, package=PACKAGE, window_seconds=30.0):
-    starts, runtime, audits, entries = [], [], {}, []
+    starts, runtime, audits, entries = [], {}, {}, []
     shutdowns, dec_starts, vendor = {}, [], []
     for line in lines:
         m = THREADTIME.match(line)
