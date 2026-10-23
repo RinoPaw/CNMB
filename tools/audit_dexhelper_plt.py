@@ -34,6 +34,9 @@ CALLS = {
     0x2e28: ('dlerror', 0x2990),
     0x2e34: ('strstr', 0x2a10),
     0x2e90: ('strcmp', 0x2aa0),
+    0x3644: ('open', 0x2ae0),
+    0x3668: ('pread', 0x2ac0),
+    0x36ac: ('pread', 0x2ac0),
 }
 LITERALS = {
     0x4a60: b'libc.so\x00',
@@ -69,6 +72,27 @@ CRITICAL_WORDS = {
     0x2ff8: 0x71100b3f,   # cmp w25,#0x402 = R_AARCH64_JUMP_SLOT
     0x3000: 0x71100f3f,   # cmp w25,#0x403 = R_AARCH64_RELATIVE
 }
+
+
+# Direct proof that the loader finds the /proc/self/maps line containing its
+# own saved ELF base, takes the last parsed pathname and opens that file.
+OWN_ELF_REOPEN_WORDS = {
+    0x484c: 0xf9002462, # str x2,[x3,#0x48] (constructor saved ELF base)
+    0x35e8: 0xf90003f5, # str x21,[sp] (7th sscanf argument: path)
+    0x3604: 0xf9402700, # ldr x0,[x24,#0x48] (saved ELF base)
+    0x3608: 0xf9400341, # ldr x1,[x26] (mapped start)
+    0x360c: 0xeb00003f, # cmp x1,x0
+    0x3610: 0x54fffdac, # b.gt read-next-line when start > base
+    0x3614: 0x9e660161, # fmov x1,d11
+    0x3618: 0xf9400021, # ldr x1,[x1] (mapped end)
+    0x361c: 0xeb01001f, # cmp x0,x1
+    0x3620: 0x54fffd2a, # b.ge read-next-line when base >= end
+    0x3630: 0x52a00101, # mov w1,#0x80000 (O_CLOEXEC)
+    0x3634: 0xaa1503e0, # mov x0,x21 (maps pathname)
+    0x3650: 0xaa1503e1, # mov x1,x21 (ELF header output)
+    0x3654: 0xd2800282, # mov x2,#0x14 (20 initial ELF bytes)
+}
+
 
 
 def parse_elf(image):
@@ -188,7 +212,7 @@ def audit(image, name):
     for position, literal in LITERALS.items():
         if image[position+shift:position+shift+len(literal)] != literal:
             raise ValueError('Original string changed at '+hex(position+shift))
-    for position, word in CRITICAL_WORDS.items():
+    for position, word in {**CRITICAL_WORDS, **OWN_ELF_REOPEN_WORDS}.items():
         if struct.unpack_from('<I', image, position+shift)[0] != word:
             raise ValueError('Original instruction changed at '+hex(position+shift))
     call_report = []
@@ -225,6 +249,10 @@ def audit(image, name):
                                 'or dynamically recovered code.'),
         'linked_elf_relocation_helper': hex(0x2cd0 + shift),
         'handling_elf_dt_needed_via_dlopen': True,
+        'selected_maps_record_contains_elf_base': True,
+        'reopens_selected_maps_path': True,
+        'reopens_with_O_CLOEXEC': True,
+        'reads_elf_header_via_pread': True,
         'relocation_kinds_compared': {
             'R_AARCH64_ABS64': 257,
             'R_AARCH64_GLOB_DAT': 1025,
