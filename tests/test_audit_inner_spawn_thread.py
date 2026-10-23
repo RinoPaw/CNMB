@@ -1,0 +1,71 @@
+"""Synthetic-only ARM64 callback and unwind-frame tests."""
+import importlib.util
+import struct
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+TOOLS = Path(__file__).resolve().parents[1] / "tools"
+sys.path.insert(0, str(TOOLS))
+spec = importlib.util.spec_from_file_location(
+    "audit_inner_spawn_thread", TOOLS / "audit_inner_spawn_thread.py")
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+
+
+def fixture():
+    b = bytearray(m.EH_FRAME_FILE_OFFSET + 0x1fe8)
+    for addr, word in {**m.REGISTRATION, **m.THREAD_CREATION,
+                       **m.WORKER_START}.items():
+        struct.pack_into("<I", b, addr, word)
+    for off, (lo, hi) in m.FDE_EXPECTED.items():
+        record = m.EH_FRAME_FILE_OFFSET + off
+        struct.pack_into("<IIiI", b, record, 0x2c, off+4,
+                         lo-(record+8), hi-lo)
+    return b
+
+
+class InnerSpawnThreadTests(unittest.TestCase):
+    def test_unwind_bounds_recover_worker_and_jni_independently(self):
+        frames = m.verify_fdes(fixture())
+        self.assertEqual(frames["0x1fb0"], ["0x59700", "0x5b45c"])
+        self.assertEqual(frames["0x1cc8"], ["0x4e1c8", "0x50354"])
+        self.assertEqual(frames["0x788"], ["0x148cc", "0x1703c"])
+
+    def test_callback_table_and_pthread_registration_signature(self):
+        b = fixture()
+        with patch.object(m, "decode_argv", return_value={
+            "path": "/system/bin/app_process",
+            "arguments": [{"role": "nice_name", "value": "--nice-name=zygote"}]
+        }):
+            result = m.verify(b)
+        self.assertEqual(
+            result["global_registration"]["callback_function"], "0x4e1c8")
+        self.assertEqual(
+            result["pthread_create"]["thread_start_function"], "0x59700")
+        self.assertEqual(
+            result["thread_worker"]["starts_with_sleep_seconds"], 2)
+        self.assertEqual(result["direct_immediate_bl_to_worker_count"], 0)
+
+    def test_unexpected_direct_branch_not_silently_ignored(self):
+        b = fixture()
+        site, target = 0x50100, 0x59700
+        struct.pack_into("<I", b, site,
+                         0x94000000 | (((target-site)//4) & 0x3ffffff))
+        self.assertEqual(m.direct_bl_callers(b, target), [site])
+
+    def test_corrupted_callback_register_or_fde_is_detected(self):
+        b = fixture()
+        b[0x1e3f8] ^= 1
+        with patch.object(m, "decode_argv", return_value={}):
+            with self.assertRaisesRegex(ValueError, "callback/thread"):
+                m.verify(b)
+        b = fixture()
+        b[m.EH_FRAME_FILE_OFFSET + 0x1fb0 + 12] ^= 1
+        with self.assertRaisesRegex(ValueError, "FDE changed"):
+            m.verify_fdes(b)
+
+
+if __name__ == "__main__":
+    unittest.main()
