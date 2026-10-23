@@ -1,6 +1,9 @@
 """Synthetic, privacy-focused tests for one-session H/DEC correlation."""
 import importlib.util
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1] / "experiments" / "correlate_reboot_h_entry.py"
@@ -104,6 +107,20 @@ class CorrelateRebootHEntryTests(unittest.TestCase):
         result = module.correlate(first + second)
         self.assertEqual(result["status"], "ambiguous")
         self.assertEqual(result["matching_sessions"], 2)
+
+    def test_missing_private_input_has_actionable_cli_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary) / "CNMB-after-reboot.txt"
+            run = subprocess.run(
+                [sys.executable, str(SOURCE), str(missing)],
+                capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(run.returncode, 2)
+        self.assertIn("Logcat file not found", run.stderr)
+        self.assertIn("intentionally excluded from Git", run.stderr)
+        self.assertIn("absolute path", run.stderr)
+        self.assertNotIn("Traceback", run.stderr)
+        self.assertFalse(run.stdout)
 
     def test_requires_explicit_main_start(self):
         self.assertEqual(module.correlate(valid()[1:])["status"], "insufficient")
