@@ -14,11 +14,12 @@
 - 在 OPPO CPH2127 / Android 12 上，干净重启后的 DEC 弹窗与 Frida 服务端运行时的原生崩溃属于两类不同的观测结果。崩溃的具体触发代码尚未定位。
 - 两轮独立实测都观察到额外 `app_process / RuntimeInit` 在主进程启动约 **4.75 秒**后初始化；第二轮通过 PPID 证实主进程至少有两个直接子进程，另有一进程在首次采样时 PPID 已为 1。两轮随后均显示 DEC 警告并结束主进程，**时间相关性尚不足以证明检测调用**。
 - 原版 ELF 的 `libDexHelper.so` `DT_INIT_ARRAY` 经重定位指向 `0x4780` 构造函数；它与 `libdexjni.so` 的可执行段末尾共享 9,030 字节（两库偏移差 `0x2000`）。该构造函数含回溯查找 ELF 头的真实指令；尚未证明它执行 DEC 检测。
+- **原版受保护内层 ELF 已成功离线复原。** 内层 `libDexHelper.so` 导入 `fork/execl`，代码存在两次 `fork`、`pipe/waitpid` 与 `execl("/system/bin/app_process", …)` 的原版直接指令。`JNI_OnLoad` 虽已恢复为真实导出，但双重 fork 在声明函数范围之外，仍待恢复调用者与完整 Java 入口。
 - 已通过原版 PLT/JUMP_SLOT 精确证明构造函数使用 `dlopen("libc.so",2)` 和 `dlsym("sscanf")`，随后进入 `0x33f8`，通过 `fopen/fgets/sscanf` 解析 `/proc/self/maps`，再执行原生内存映射/权限配置流程。此链属于原版装载行为；尚未定位 DEC 检测条件。
 - 原版 APK 全部 191 份 ARM64 SO 中，**174 份**含逐字节相同的 2,564 B 装载辅助核心（其中 10 份多匹配一个字节），附带 `/proc/self/maps`、`mprotect(RWX)`、缓存刷新及九条系统调用封装；该段还有 `__b_a_n_g_c_l_e__check1234567_` 原版签名。此为**共用保护代码证据**，尚未与 DEC 判定建立调用关系。
 - 先前原版 SO 中的 `forked from pid:` 及 `Current process is forked from` 已通过 Dex 方法归属和指令核实：它们属于支付宝 `CrashBridge.isForkedCrashOnlyForTracing` 的日志文本解析逻辑，不能作为 SecNeo 创建子进程的证据。
 
-详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[14 组 Dex 元数据扫描](docs/12.5.5-fourteen-dex-census.md)；[原版进程操作与 ARM64 系统调用审计](docs/12.5.5-native-and-dalvik-process-surface.md)；[174 份 ARM64 库共用装载尾段](docs/12.5.5-shared-native-loader-tail.md)；[DexHelper 加载构造函数与 dexjni 共用引导代码](docs/12.5.5-dexhelper-native-constructors.md)；[DexHelper PLT 与映射加载链](docs/12.5.5-dexhelper-plt-maps-loader.md)；[原生加载与崩溃阶段](docs/12.5.5-native-loader-crash-stage.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
+详细报告：[静态取证报告](docs/12.5.5-static-analysis.md)；[DEC Dex 方法调用链](docs/12.5.5-dec-dex-callgraph.md)；[DEC 生命周期](docs/12.5.5-dec-startup-lifecycle.md)；[CmccApplication → DEC 启动连接](docs/12.5.5-cmcc-dec-bridge.md)；[受保护字符串与 RootBeer](docs/12.5.5-dex-string-recovery-rootbeer.md)；[14 组 Dex 元数据扫描](docs/12.5.5-fourteen-dex-census.md)；[原版进程操作与 ARM64 系统调用审计](docs/12.5.5-native-and-dalvik-process-surface.md)；[174 份 ARM64 库共用装载尾段](docs/12.5.5-shared-native-loader-tail.md)；[DexHelper 加载构造函数与 dexjni 共用引导代码](docs/12.5.5-dexhelper-native-constructors.md)；[DexHelper PLT 与映射加载链](docs/12.5.5-dexhelper-plt-maps-loader.md)；[内层 ELF 复原与 fork/execl 创建 app_process](docs/12.5.5-nested-elf-recovery-process-spawn.md)；[原生加载与崩溃阶段](docs/12.5.5-native-loader-crash-stage.md)；[动态对照记录](docs/2026-10-22-dynamic-observations.md)。
 
 ## 复核
 
@@ -57,6 +58,8 @@ python .\tools\audit_native_svc.py .\path\to\base.apk
 python .\tools\audit_shared_native_tail.py .\path\to\base.apk
 python .\tools\audit_protector_constructors.py .\path\to\base.apk
 python .\tools\audit_dexhelper_plt.py .\path\to\base.apk
+python .\tools\audit_dexhelper_symbol_fallback.py .\path\to\base.apk
+python .\tools\audit_nested_elf.py .\path\to\base.apk
 ```
 
 ### 原生加载阶段检查（离线）
