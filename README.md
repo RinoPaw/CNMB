@@ -169,9 +169,11 @@ python .\experiments\correlate_worker_session.py `
 
 ~~~powershell
 python .\experiments\correlate_reboot_h_entry.py .\CNMB-after-reboot.txt
+# 或使用原始日志在本机的绝对路径，无需复制到仓库：
+python .\experiments\correlate_reboot_h_entry.py "$HOME\Downloads\CNMB-after-reboot.txt"
 ~~~
 
-工具拒绝跨天拼接和多会话歧义，输出仅含允许的 PID、UID、时间与证据边界。原始日志保留在本地。详情：[H 入口与路由核验](docs/2026-10-22-runtime-h-entry-confirmation.md)。
+工具拒绝跨天拼接和多会话歧义，输出仅含允许的 PID、UID、时间与证据边界。原始日志保留在本地。 **`CNMB-after-reboot.txt` 是私有设备日志，不包含在 GitHub 仓库中。使用前须从之前保存的原始采集文件恢复；若路径不存在，工具会给出明确的缺失文件提示。**详情：[H 入口与路由核验](docs/2026-10-22-runtime-h-entry-confirmation.md)。
 
 ## 数据边界
 
