@@ -77,6 +77,20 @@ class CorrelateRebootHEntryTests(unittest.TestCase):
         self.assertEqual(result["status"], "correlated")
         self.assertFalse(result["session"]["vendor_window_log_names_main_pid"])
 
+    def test_rejects_worker_runtime_and_audit_from_prior_session(self):
+        records = valid()
+        records[2] = records[2].replace("15:25:59.234", "15:20:59.234")
+        records[3] = records[3].replace("15:25:59.238", "15:20:59.238")
+        self.assertEqual(module.correlate(records)["status"], "insufficient")
+
+    def test_ignores_shutdown_after_dec(self):
+        records = valid()
+        records[5] = records[5].replace("15:26:02.981", "15:26:04.981")
+        result = module.correlate(records)
+        self.assertEqual(result["status"], "correlated")
+        self.assertIsNone(
+            result["session"]["intervals_seconds"]["worker_shutdown_to_dec_launch"])
+
     def test_no_association_across_log_days(self):
         records = valid()
         records[-2] = records[-2].replace("10-22", "10-23")
