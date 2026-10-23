@@ -17,7 +17,8 @@ spec.loader.exec_module(m)
 def fixture():
     b = bytearray(m.EH_FRAME_FILE_OFFSET + max(m.FDE_EXPECTED) + 0x40)
     for addr, word in {**m.JNI_CALL_REGISTRATION,
-                       **m.REGISTRATION, **m.THREAD_CREATION,
+                       **m.REGISTRATION, **m.INITIALIZER_THREAD,
+                       **m.CALLBACK_DISPATCH, **m.THREAD_CREATION,
                        **m.WORKER_START}.items():
         struct.pack_into("<I", b, addr, word)
     for off, (lo, hi) in m.FDE_EXPECTED.items():
@@ -35,6 +36,7 @@ class InnerSpawnThreadTests(unittest.TestCase):
         self.assertEqual(frames["0x1cc8"], ["0x4e1c8", "0x50354"])
         self.assertEqual(frames["0x788"], ["0x148cc", "0x1703c"])
         self.assertEqual(frames["0x32c8"], ["0x1df7c", "0x249d0"])
+        self.assertEqual(frames["0x1c18"], ["0x4b3bc", "0x4b768"])
 
     def test_callback_table_and_pthread_registration_signature(self):
         b = fixture()
@@ -50,9 +52,18 @@ class InnerSpawnThreadTests(unittest.TestCase):
             result["global_registration"]["callback_function"], "0x4e1c8")
         self.assertEqual(
             result["pthread_create"]["thread_start_function"], "0x59700")
+        self.assertEqual(result["dispatcher_thread"]["entry_function"], "0x4b3bc")
+        self.assertEqual(result["dispatcher_thread"]["callback_bit_mask"], "0x04")
+        self.assertEqual(result["dispatcher_thread"]["indirect_call"], "0x4b494")
         self.assertEqual(
             result["thread_worker"]["starts_with_sleep_seconds"], 2)
         self.assertEqual(result["direct_immediate_bl_to_worker_count"], 0)
+
+    def test_dispatcher_slot_selection_by_single_config_bit(self):
+        for flags in (0, 1, 2, 8, 0x80):
+            self.assertEqual((flags & 4) * 8, 0)
+        for flags in (4, 5, 6, 0x84):
+            self.assertEqual((flags & 4) * 8, 0x20)
 
     def test_unexpected_direct_branch_not_silently_ignored(self):
         b = fixture()
