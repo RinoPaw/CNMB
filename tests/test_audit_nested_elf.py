@@ -47,6 +47,22 @@ class NestedElfAuditTests(unittest.TestCase):
         raw[0xf1e8f:0xf1e8f+24]=encoded
         self.assertEqual(m.app_process_path(raw),"/system/bin/app_process")
 
+    def test_double_fork_control_flow_signatures(self):
+        instructions = m.SPAWN_FLOW_WORDS
+        self.assertEqual(instructions[0x5a428], 0x34000480)
+        self.assertEqual(instructions[0x5a4e4], 0x35007b20)
+        self.assertEqual(instructions[0x5a6f0], 0x911603e0)
+        self.assertEqual(instructions[0x5a6f4], 0x911603e1)
+        for site,destination in ((0x5a3d0,0xebe0),
+                                 (0x5a454,0xf820),
+                                 (0x5a418,0xf200),
+                                 (0x5a4c4,0xf200),
+                                 (0x5a710,0xf7f0)):
+            self.assertEqual(
+                site + (((instructions[site] & 0x3ffffff) -
+                        (1<<26 if instructions[site] & (1<<25) else 0)) * 4),
+                destination)
+
     def test_arm64_branch_targets_and_jni_symbol_range(self):
         sample=bytearray(0x100)
         site=0x40
