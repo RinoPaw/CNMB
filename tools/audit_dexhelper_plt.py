@@ -29,6 +29,11 @@ CALLS = {
     0x3884: ('mmap', 0x29e0),
     0x4088: ('mprotect', 0x2af0),
     0x40c4: ('mprotect', 0x2af0),
+    0x450c: ('dlopen', 0x2a30),  # load DT_NEEDED dependency
+    0x2e20: ('dlsym', 0x2a50),  # resolve imported symbol
+    0x2e28: ('dlerror', 0x2990),
+    0x2e34: ('strstr', 0x2a10),
+    0x2e90: ('strcmp', 0x2aa0),
 }
 LITERALS = {
     0x4a60: b'libc.so\x00',
@@ -50,7 +55,19 @@ CRITICAL_WORDS = {
     0x35c4: 0xaa1303e0,   # mov x0,x19 (line buffer)
     0x35e0: 0xaa1603e1,   # mov x1,x22 (scanf format)
     0x35dc: 0xf9401f28,   # ldr x8,[x25,#0x38] (resolved sscanf ptr)
-    0x3600: 0xd63f0100,   # blr x8 (indirect sscanf)
+    0x3600: 0xd63f0100,   # blr x8 (indirect sscanf),
+    0x44ec: 0xf100041f,   # cmp x0,#1 (ELF DT_NEEDED entry)
+    0x44f4: 0xf94006c0,   # ldr x0,[x22,#8] (DT_NEEDED string index)
+    0x44f8: 0x52800041,   # mov w1,#2 (RTLD_NOW)
+    0x4508: 0x8b000040,   # add x0,x2,x0 (dependency name)
+    0x454c: 0x97fff9e1,   # bl 0x2cd0 (ELF relocation resolver)
+    0x456c: 0x97fff9d9,   # bl 0x2cd0 (another relocation range)
+    0x2f00: 0x7104173f,   # cmp w25,#0x105 = ABS? AArch64 PREL32
+    0x2f0c: 0x7110073f,   # cmp w25,#0x401 = R_AARCH64_GLOB_DAT
+    0x2f20: 0x7110033f,   # cmp w25,#0x400 = R_AARCH64_COPY
+    0x2fd0: 0x7104073f,   # cmp w25,#0x101 = R_AARCH64_ABS64
+    0x2ff8: 0x71100b3f,   # cmp w25,#0x402 = R_AARCH64_JUMP_SLOT
+    0x3000: 0x71100f3f,   # cmp w25,#0x403 = R_AARCH64_RELATIVE
 }
 
 
@@ -185,6 +202,9 @@ def audit(image, name):
     local_site, local_target = 0x4940+shift, 0x33f8+shift
     if bl_target(image, local_site) != local_target:
         raise ValueError('Constructor did not branch to native helper')
+    for local_site in [0x454c, 0x456c]:
+        if bl_target(image, local_site + shift) != 0x2cd0 + shift:
+            raise ValueError('ELF relocation helper branch missing')
     return {
         'library':name, 'constructor_calls_from':hex(0x4780+shift),
         'dlopen_library':'libc.so', 'dlsym_function':'sscanf',
@@ -194,6 +214,14 @@ def audit(image, name):
         'local_helper_uses_resolved_sscanf_via_blr':True,
         'resolved_plt_calls':call_report,
         'native_imports':len(resolved),
+        'linked_elf_relocation_helper': hex(0x2cd0 + shift),
+        'handling_elf_dt_needed_via_dlopen': True,
+        'relocation_kinds_compared': {
+            'R_AARCH64_ABS64': 257,
+            'R_AARCH64_GLOB_DAT': 1025,
+            'R_AARCH64_JUMP_SLOT': 1026,
+            'R_AARCH64_RELATIVE': 1027,
+        },
         'dynamic_symbol_census':symbol_census,
         'scope':('Raw ELF imports, callsites and strings only; does not establish '
                  'runtime execution or DEC-specific root check.')
