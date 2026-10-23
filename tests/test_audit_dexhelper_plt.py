@@ -80,6 +80,27 @@ class OriginalLoaderPltTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'JNI_OnLoad'):
             m.dynamic_symbol_census(b, lambda va:va, tags, 'libDexHelper.so')
 
+    def test_self_elf_mapping_interval_proof_and_file_open(self):
+        # Check the original-literal instruction signature and PLT mappings
+        # without needing or embedding the proprietary shared object.
+        checks = m.OWN_ELF_REOPEN_WORDS
+        self.assertEqual(checks[0x484c], 0xf9002462)
+        self.assertEqual(checks[0x360c], 0xeb00003f)
+        self.assertEqual(checks[0x3610], 0x54fffdac)
+        self.assertEqual(checks[0x361c], 0xeb01001f)
+        self.assertEqual(checks[0x3620], 0x54fffd2a)
+        self.assertEqual(checks[0x3630], 0x52a00101)
+        self.assertEqual(m.CALLS[0x3644], ('open', 0x2ae0))
+        self.assertEqual(m.CALLS[0x3668], ('pread', 0x2ac0))
+        self.assertEqual(m.CALLS[0x36ac], ('pread', 0x2ac0))
+        for base, start, end, is_target in [
+            (0x10400, 0x10000, 0x11000, True),
+            (0x10000, 0x10000, 0x11000, True),
+            (0x11000, 0x10000, 0x11000, False),
+            (0x0fff,  0x10000, 0x11000, False),
+        ]:
+            self.assertEqual(start <= base < end, is_target)
+
     def test_fails_on_invalid_elf(self):
         with self.assertRaises(ValueError):
             m.parse_elf(b'junk')
