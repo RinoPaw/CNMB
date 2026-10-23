@@ -24,6 +24,20 @@ REGISTRATION = {
     0x1e3f4: 0x91072108,  # add x8,x8,#0x1c8 -> 0x4e1c8
     0x1e3f8: 0xf90012c8,  # str x8,[x22,#0x20] (global callback table)
 }
+# Normal initialization path: bit 0x04 is derived from a runtime config byte.
+# w10 candidates (0,11,-117) all have bit 0x04 clear, and ORs 0x10/0x20/0x40
+# leave it clear. CSEL adds 0x05 only if config byte +0x4a != 0.
+CONFIG_FLAG_ORIGIN = {
+    0x1dfc4: 0xf9400268,  # ldr x8,[x19] runtime config structure
+    0x1e014: 0x39412909,  # ldrb w9,[x8,#0x4a]
+    0x1e038: 0x528000ab,  # mov w11,#5
+    0x1e04c: 0x2a0b014b,  # orr w11,w10,w11: introduces bit 0x04
+    0x1e080: 0x7100013f,  # cmp w9,#0
+    0x1e084: 0x1a8b0149,  # csel w9,w10,w11,eq
+    0x1e094: 0x321a0128,  # orr w8,w9,#0x40
+    0x1e098: 0x1a880133,  # csel w19,w9,w8,eq
+}
+
 # JNI-invoked initializer creates the dispatcher thread and forwards a
 # configuration struct whose byte +8 selects the callback-table slot.
 INITIALIZER_THREAD = {
@@ -109,7 +123,8 @@ def direct_bl_callers(elf, target):
 
 
 def verify(elf):
-    for address, word in {**JNI_CALL_REGISTRATION, **REGISTRATION,
+    for address, word in {**JNI_CALL_REGISTRATION, **CONFIG_FLAG_ORIGIN,
+                          **REGISTRATION,
                           **INITIALIZER_THREAD, **CALLBACK_DISPATCH,
                           **THREAD_CREATION, **WORKER_START}.items():
         if struct.unpack_from("<I", elf, address)[0] != word:
@@ -144,6 +159,12 @@ def verify(elf):
             "pthread_create_calls": ["0x1e4f4", "0x1e520"],
             "unwind_range": ["0x4b3bc", "0x4b768"],
             "config_byte_offset": 8,
+            "config_flag_source_field_offset": "0x4a",
+            "flag_bit_0x04_source_rule": "runtime_config[0x4a] != 0",
+            "flag_source_scope": (
+                "Proven for the normal initializer path by CSEL at "
+                "0x1e084; actual runtime config byte not yet observed."
+            ),
             "callback_bit_mask": "0x04",
             "selected_table_slot_if_set": "0x20",
             "indirect_call": "0x4b494",
