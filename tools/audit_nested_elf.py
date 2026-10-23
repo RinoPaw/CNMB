@@ -35,6 +35,21 @@ CALLS = {
 }
 
 
+# Exact original ARM64 instructions in the unnamed inner ELF code region.
+SPAWN_FLOW_WORDS = {
+    0x5a3d0: 0x97fed204, # bl pipe@plt
+    0x5a418: 0x97fed37a, # bl fork@plt
+    0x5a428: 0x34000480, # cbz w0 -> child
+    0x5a454: 0x97fed4f3, # bl waitpid@plt
+    0x5a4c4: 0x97fed34f, # bl fork@plt
+    0x5a4e4: 0x35007b20, # cbnz w0 -> parent
+    0x5a6f0: 0x911603e0, # add x0,sp,#0x580 (path)
+    0x5a6f4: 0x911603e1, # add x1,sp,#0x580 (argv0)
+    0x5a710: 0x97fed438, # bl execl@plt
+}
+
+
+
 def rc4_start(ciphertext, key):
     """Return precisely the RC4-decoded first 64 bytes, no retained key."""
     box = list(range(256))
@@ -170,6 +185,12 @@ def inspect(elf, conf, library):
         if any(conf["jni_va"] <= site < conf["jni_va"]+conf["jni_size"]
                for _,sites in CALLS.values() for site in sites):
             raise ValueError("Callsites unexpectedly inside JNI_OnLoad bounds")
+        for at, expected in SPAWN_FLOW_WORDS.items():
+            if struct.unpack_from("<I", elf, at)[0] != expected:
+                raise ValueError("Changed inner process control flow at "+hex(at))
+        for site, dest in ((0x5a3d0,0xebe0),(0x5a454,0xf820)):
+            if bl_target(elf,site)!=dest:
+                raise ValueError("pipe or waitpid PLT address changed")
         result.update({
             "fork_and_execl_direct_calls":calls,
             "double_fork_pattern_sites":["0x5a418","0x5a4c4"],
