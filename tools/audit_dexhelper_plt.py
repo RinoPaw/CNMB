@@ -120,6 +120,11 @@ def imports(image, at, tags):
         items.append({'name': name, 'got_elf_va': r_offset, 'symbol_index': sym})
     if len(items) != 24:
         raise ValueError('Unexpected PLT import count')
+    forbidden = {'fork', 'vfork', 'clone', 'execve', 'posix_spawn',
+                 'posix_spawnp', 'system', 'popen'}
+    if forbidden.intersection(item['name'] for item in items):
+        raise ValueError('Unexpected direct process spawning import')
+
     return items
 
 
@@ -214,6 +219,10 @@ def audit(image, name):
         'local_helper_uses_resolved_sscanf_via_blr':True,
         'resolved_plt_calls':call_report,
         'native_imports':len(resolved),
+        'direct_plt_imports_for_process_spawn': [],
+        'import_boundary_note':('No direct fork/clone/execve/spawn PLT symbol; '
+                                'this does not exclude dlsym, direct syscalls '
+                                'or dynamically recovered code.'),
         'linked_elf_relocation_helper': hex(0x2cd0 + shift),
         'handling_elf_dt_needed_via_dlopen': True,
         'relocation_kinds_compared': {
