@@ -50,5 +50,29 @@ class WorkerProfileTests(unittest.TestCase):
         self.assertNotIn("HIDDEN", str(out))
 
 
+    def test_slash_separated_main_entry_from_android_runtime(self):
+        src = [
+            "10-22 15:26:00.969  8714  8714 D AndroidRuntime: Calling main entry com/secneo/apkwrapper/H with secret=HIDDEN\\n",
+            "10-22 15:26:00.970  8300  8300 D AndroidRuntime: Calling main entry com/android/commands/monkey/Monkey\\n",
+            "10-22 15:26:01.000  8714  8714 I OtherTag: token=PRIVATE\\n",
+        ]
+        out = m.profile(src, 8714)
+        self.assertTrue(out["has_explicit_main_entry_log"])
+        self.assertEqual(
+            [e.get("class_name") for e in out["events"]
+             if e["kind"] == "explicit_main_entry_log"],
+            ["com.secneo.apkwrapper.H"])
+        self.assertNotIn("HIDDEN", str(out))
+        self.assertNotIn("PRIVATE", str(out))
+        self.assertNotIn("Monkey", str(out))
+
+    def test_main_entry_does_not_treat_path_as_java_class(self):
+        src = [
+            "10-22 15:26:00.969  8714  8714 D AndroidRuntime: Calling main entry /data/private/file\\n",
+        ]
+        out = m.profile(src, 8714)
+        self.assertFalse(out["has_explicit_main_entry_log"])
+
+
 if __name__ == "__main__":
     unittest.main()
