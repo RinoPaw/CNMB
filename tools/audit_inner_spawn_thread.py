@@ -24,6 +24,30 @@ REGISTRATION = {
     0x1e3f4: 0x91072108,  # add x8,x8,#0x1c8 -> 0x4e1c8
     0x1e3f8: 0xf90012c8,  # str x8,[x22,#0x20] (global callback table)
 }
+# JNI-invoked initializer creates the dispatcher thread and forwards a
+# configuration struct whose byte +8 selects the callback-table slot.
+INITIALIZER_THREAD = {
+    0x1e458: 0x39002013,  # strb w19,[x0,#8] (per-worker flag byte)
+    0x1e4e0: 0xb0000162,  # adrp x2, page 0x4b000
+    0x1e4e4: 0x910ef042,  # add x2,x2,#0x3bc -> 0x4b3bc
+    0x1e4ec: 0xaa1f03e1,  # default pthread attrs
+    0x1e4f0: 0xaa1403e3,  # x3=x20 (worker context)
+    0x1e4f4: 0x97ffc1c3,  # bl pthread_create@plt
+    0x1e518: 0xaa1503e2,  # retry x2=x21 (same dispatcher)
+    0x1e51c: 0xaa1403e3,  # retry same context
+    0x1e520: 0x97ffc1b8,  # retry pthread_create@plt
+}
+# Dispatcher thread at 0x4b3bc tests flag bit 0x04, then loads slot +0x20.
+CALLBACK_DISPATCH = {
+    0x4b3e8: 0x97ff0de2,  # initial sleep(1)
+    0x4b3f0: 0x39402274,  # ldrb w20,[x19,#8] configuration byte
+    0x4b480: 0x90000713,  # adrp x19, 0x12b000
+    0x4b484: 0x927e0288,  # and x8,x20,#0x4
+    0x4b488: 0x91100273,  # add x19,x19,#0x400 global callback table
+    0x4b48c: 0xf8687a68,  # ldr x8,[x19,x8,lsl#3]; if bit4 -> +0x20
+    0x4b490: 0x910043e0,  # x0=sp+0x10 (callback data)
+    0x4b494: 0xd63f0100,  # blr x8
+}
 THREAD_CREATION = {
     0x4fff0: 0xd0000042,  # adrp x2,0x59000
     0x4fff4: 0x911c0042,  # add x2,x2,#0x700 -> worker at 0x59700
@@ -46,6 +70,7 @@ FDE_EXPECTED = {
     0x1cc8: (0x4e1c8, 0x50354),  # pthread_create callsites
     0x1fb0: (0x59700, 0x5b45c),  # fork/execl worker
     0x32c8: (0x1df7c, 0x249d0),  # JNI-invoked callback-table initializer
+    0x1c18: (0x4b3bc, 0x4b768),  # first dispatcher pthread entry
 }
 JNI_CALL_REGISTRATION = {
     0x16990: 0x94001d7b,  # JNI_OnLoad BL 0x1df7c
@@ -84,11 +109,14 @@ def direct_bl_callers(elf, target):
 
 
 def verify(elf):
-    for address, word in {**JNI_CALL_REGISTRATION, **REGISTRATION, **THREAD_CREATION,
-                          **WORKER_START}.items():
+    for address, word in {**JNI_CALL_REGISTRATION, **REGISTRATION,
+                          **INITIALIZER_THREAD, **CALLBACK_DISPATCH,
+                          **THREAD_CREATION, **WORKER_START}.items():
         if struct.unpack_from("<I", elf, address)[0] != word:
             raise ValueError("Changed native callback/thread instruction: "+hex(address))
     for position, target in (
+        (0x1e4f4, 0xec00), (0x1e520, 0xec00),
+        (0x4b3e8, 0xeb70),
         (0x50004, 0xec00), (0x50030, 0xec00),
         (0x59738, 0xeb70)):
         if bl_target(elf, position) != target:
@@ -109,6 +137,21 @@ def verify(elf):
             "direct_call_site": "0x16990",
             "callback_registration_initializer": "0x1df7c",
             "initializer_unwind_range": ["0x1df7c","0x249d0"]
+        },
+        "dispatcher_thread": {
+            "created_by_initializer": "0x1df7c",
+            "entry_function": "0x4b3bc",
+            "pthread_create_calls": ["0x1e4f4", "0x1e520"],
+            "unwind_range": ["0x4b3bc", "0x4b768"],
+            "config_byte_offset": 8,
+            "callback_bit_mask": "0x04",
+            "selected_table_slot_if_set": "0x20",
+            "indirect_call": "0x4b494",
+            "reasoning": ("The initializer stores flag byte at context+8. "
+                          "Dispatcher loads it, computes x20 & 4, then "
+                          "loads table[(x20 & 4)] in 8-byte entries; "
+                          "setting bit 0x04 selects slot +0x20."),
+            "limitation": "Actual flag-byte value has not been observed."
         },
         "global_registration": {
             "code_address": "0x1e3f0",
@@ -137,7 +180,9 @@ def verify(elf):
         "unwind_fdes": owner_fdes,
         "direct_immediate_bl_to_worker_count": 0,
         "limits": ("JNI_OnLoad calls the callback-table initializer, but runtime "
-                   "invocation of the registered callback remains unverified. "
+                   "dispatcher calls the callback when config bit 0x04 is set; "
+                   "the runtime config byte and actual branch outcome "
+                   "remain unobserved. "
                    "The original executable machine code establishes callback "
                    "registration, thread start, and subsequent fork-execl, "
                    "but runtime causality and DEC involvement require more evidence.")
