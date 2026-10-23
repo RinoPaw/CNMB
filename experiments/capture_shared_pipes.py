@@ -171,6 +171,8 @@ def main():
         parser.exit(2, f"ADB/root precheck failed: {type(exc).__name__}: {exc}\n")
     out = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
+        # Store local evidence under ignored captures/ by default in examples.
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(out + "\n", encoding="utf-8")
     print(out)
 
