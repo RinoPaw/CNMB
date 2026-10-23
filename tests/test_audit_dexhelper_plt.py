@@ -62,6 +62,24 @@ class OriginalLoaderPltTests(unittest.TestCase):
         self.assertEqual(results[12]['name'],'example_12')
         self.assertEqual(results[12]['got_elf_va'],0x3060)
 
+    def test_padded_hash_symbols_do_not_imply_jni_export(self):
+        b = bytearray(0x2200)
+        struct.pack_into('<II', b, 0x80, 197, 239)
+        # The 239 entries reside at 0x100..0x1768; most names are empty.
+        b[0x1800:0x1801] = b'\x00'
+        b[0x1801:0x1807] = b'foo\x00xx'
+        struct.pack_into('<I', b, 0x100+24*3, 1)
+        tags = {4:0x80, 6:0x100, 5:0x1800}
+        census = m.dynamic_symbol_census(
+            b, lambda va:va, tags, 'libDexHelper.so')
+        self.assertEqual(census['hash_symbol_chain_entries'], 239)
+        self.assertEqual(census['empty_name_slots'], 238)
+        self.assertFalse(census['static_jni_onload_symbol_found'])
+        b[0x1830:0x183b] = b'JNI_OnLoad\x00'
+        struct.pack_into('<I', b, 0x100+24*3, 0x30)
+        with self.assertRaisesRegex(ValueError, 'JNI_OnLoad'):
+            m.dynamic_symbol_census(b, lambda va:va, tags, 'libDexHelper.so')
+
     def test_fails_on_invalid_elf(self):
         with self.assertRaises(ValueError):
             m.parse_elf(b'junk')
