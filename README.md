@@ -161,6 +161,18 @@ python .\experiments\correlate_worker_session.py `
 
 分析器要求新日志中具有对应主进程 PID 的 `am_proc_start`，才选取该轮的设备本地时间窗口；若已被覆盖，则拒绝关联旧的 DEC 日志。输入与输出都是本地取证材料，仅公开脱敏后的事实。主机相对采样秒数与手机 Logcat 时间不能直接精确相减。
 
+### 重启日志中 H 入口与 DEC 启动的同轮关联
+
+2026-10-22 15:25 这轮原始日志已在独立 PID 的 `AndroidRuntime` 中观察到 `Calling main entry com/secneo/apkwrapper/H`。同轮 OPPO 窗口路由日志在 DEC 启动后 12 毫秒记录了主进程的 `callingPid`，主进程 PID 也由 `ActivityManager` 启动记录佐证。现有证据仍未确认两个进程的实际父子创建路径或 DEC 检测通信。
+
+使用只读工具将 *同一次启动* 的主进程启动、辅助进程身份和 Java 入口、DEC 启动进行严格关联：
+
+~~~powershell
+python .\experiments\correlate_reboot_h_entry.py .\CNMB-after-reboot.txt
+~~~
+
+工具拒绝跨天拼接和多会话歧义，输出仅含允许的 PID、UID、时间与证据边界。原始日志保留在本地。详情：[H 入口与路由核验](docs/2026-10-22-runtime-h-entry-confirmation.md)。
+
 ## 数据边界
 
 **请勿提交** APK、SO、DEX 转储、完整 logcat、Tombstone、`envc.push`、设备标识、令牌、账号信息或未经审查的诊断 ZIP。公开仓库只保留可公开的分析代码、去标识化结论及校验哈希。此仓库不分发原版商业客户端。
