@@ -54,7 +54,7 @@ def correlate(lines, package=PACKAGE, window_seconds=30.0):
             p = START_PROC.search(msg)
             if p and p.group("package") == package:
                 uid = int(p.group("user")) * 100000 + 10000 + int(p.group("app"))
-                starts.append((moment, pid if pid == int(p.group("pid")) else int(p.group("pid")), uid, clock))
+                starts.append((moment, int(p.group("pid")), uid, clock))
         if tag == "AndroidRuntime":
             r = RUNTIME.search(msg)
             if r:
@@ -96,9 +96,13 @@ def correlate(lines, package=PACKAGE, window_seconds=30.0):
                     continue
                 rt = [(ts, c) for ts, rt_uid, c in runtime.get(worker_pid, [])
                       if rt_uid == uid and seconds(entry, ts) is not None
+                      and seconds(ts, start) is not None
+                      and 0 <= seconds(ts, start)
                       and 0 <= seconds(entry, ts) <= window_seconds]
                 av = [ts for ts in audits.get(worker_pid, [])
                       if seconds(entry, ts) is not None
+                      and seconds(ts, start) is not None
+                      and 0 <= seconds(ts, start)
                       and 0 <= seconds(entry, ts) <= window_seconds]
                 if not rt or not av:
                     continue
@@ -112,7 +116,9 @@ def correlate(lines, package=PACKAGE, window_seconds=30.0):
                     for ts, vendor_pid in vendor)
                 ended = [s for s, c in shutdowns.get(worker_pid, [])
                          if seconds(s, entry) is not None and
-                         0 <= seconds(s, entry) <= window_seconds]
+                         seconds(dec, s) is not None and
+                         0 <= seconds(s, entry) <= window_seconds and
+                         0 <= seconds(dec, s)]
                 ended_clock = min((c for s, c in shutdowns.get(worker_pid, [])
                                   if s in ended), default=None)
                 candidates.append({
