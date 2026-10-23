@@ -43,8 +43,12 @@ WORKER_START = {
 }
 FDE_EXPECTED = {
     0x788: (0x148cc, 0x1703c),   # JNI_OnLoad
-    0x1cc8: (0x4e1c8, 0x50354),  # owner of pthread_create callsites
-    0x1fb0: (0x59700, 0x5b45c),  # owner of fork/exec callsites
+    0x1cc8: (0x4e1c8, 0x50354),  # pthread_create callsites
+    0x1fb0: (0x59700, 0x5b45c),  # fork/execl worker
+    0x32c8: (0x1df7c, 0x249d0),  # JNI-invoked callback-table initializer
+}
+JNI_CALL_REGISTRATION = {
+    0x16990: 0x94001d7b,  # JNI_OnLoad BL 0x1df7c
 }
 EH_FRAME_FILE_OFFSET = 0x1063a0
 TEXT_RANGE = (0xfa00, 0xefd58)
@@ -59,7 +63,7 @@ def verify_fdes(elf):
             "<IIiI", elf, rec)
         start = rec + 8 + displacement
         end = start + size
-        if length != 0x2c or not cie_delta or (start, end) != expected:
+        if length != (0x34 if relative_offset == 0x32c8 else 0x2c) or not cie_delta or (start, end) != expected:
             raise ValueError("Original FDE changed at "+hex(relative_offset))
         found[hex(relative_offset)] = [hex(start), hex(end)]
     return found
@@ -80,7 +84,7 @@ def direct_bl_callers(elf, target):
 
 
 def verify(elf):
-    for address, word in {**REGISTRATION, **THREAD_CREATION,
+    for address, word in {**JNI_CALL_REGISTRATION, **REGISTRATION, **THREAD_CREATION,
                           **WORKER_START}.items():
         if struct.unpack_from("<I", elf, address)[0] != word:
             raise ValueError("Changed native callback/thread instruction: "+hex(address))
@@ -89,6 +93,8 @@ def verify(elf):
         (0x59738, 0xeb70)):
         if bl_target(elf, position) != target:
             raise ValueError("Original pthread_create or sleep PLT target changed")
+    if bl_target(elf, 0x16990) != 0x1df7c:
+        raise ValueError("JNI_OnLoad callback table initializer call changed")
     owner_fdes = verify_fdes(elf)
     # The worker address is passed to pthread_create through x2.
     # No static immediate BL to that address exists in the original .text.
@@ -98,6 +104,12 @@ def verify(elf):
     if not (0x59700 <= 0x5a418 < 0x5a710 < 0x5b45c):
         raise ValueError("Spawn instruction escapes its documented unwind range")
     return {
+        "jni_bootstrap": {
+            "JNI_OnLoad_symbol_range": ["0x148cc","0x1703c"],
+            "direct_call_site": "0x16990",
+            "callback_registration_initializer": "0x1df7c",
+            "initializer_unwind_range": ["0x1df7c","0x249d0"]
+        },
         "global_registration": {
             "code_address": "0x1e3f0",
             "callback_function": "0x4e1c8",
@@ -124,7 +136,8 @@ def verify(elf):
         },
         "unwind_fdes": owner_fdes,
         "direct_immediate_bl_to_worker_count": 0,
-        "limits": ("JNI_OnLoad-to-global-dispatch activation remains unverified. "
+        "limits": ("JNI_OnLoad calls the callback-table initializer, but runtime "
+                   "invocation of the registered callback remains unverified. "
                    "The original executable machine code establishes callback "
                    "registration, thread start, and subsequent fork-execl, "
                    "but runtime causality and DEC involvement require more evidence.")
