@@ -106,6 +106,42 @@ def imports(image, at, tags):
     return items
 
 
+def dynamic_symbol_census(image, at, tags, name):
+    if 4 not in tags:
+        raise ValueError('Missing DT_HASH')
+    bucket_count, symbol_count = struct.unpack_from('<II', image, at(tags[4]))
+    expected = ((197, 239) if name == 'libDexHelper.so' else (17, 29))
+    if (bucket_count, symbol_count) != expected:
+        raise ValueError('Unexpected dynamic symbol table size')
+    empty = 0
+    symbols = set()
+    exported = set()
+    for n in range(symbol_count):
+        name_idx, info, vis, section, va, size = struct.unpack_from(
+            '<IBBHQQ', image, at(tags[6]) + 24*n)
+        ptr = at(tags[5]) + name_idx
+        end = image.find(b'\x00', ptr)
+        if end < 0 or end-ptr > 256:
+            raise ValueError('Invalid dynamic symbol string')
+        label = image[ptr:end].decode('ascii')
+        if not label:
+            empty += 1
+        else:
+            symbols.add(label)
+            if section:
+                exported.add(label)
+    if 'JNI_OnLoad' in symbols:
+        raise ValueError('Unexpected static JNI_OnLoad dynamic symbol')
+    return {
+        'hash_buckets': bucket_count,
+        'hash_symbol_chain_entries': symbol_count,
+        'empty_name_slots': empty,
+        'static_jni_onload_symbol_found': False,
+        'limitation': ('A JNI_OnLoad literal string exists, but no dynamic symbol '
+                       'by this name; runtime-created symbols are not ruled out.')
+    }
+
+
 def bl_target(image, file_position):
     op = struct.unpack_from('<I', image, file_position)[0]
     if op >> 26 != 0b100101:
@@ -122,6 +158,7 @@ def audit(image, name):
     shift = -0x2000 if name == 'libdexjni.so' else 0
     at, tags = parse_elf(image)
     resolved = imports(image, at, tags)
+    symbol_census = dynamic_symbol_census(image, at, tags, name)
     expected_got = 0x14f30 + shift
     for i, entry in enumerate(resolved):
         if entry['got_elf_va'] != expected_got + 8*i:
@@ -157,6 +194,7 @@ def audit(image, name):
         'local_helper_uses_resolved_sscanf_via_blr':True,
         'resolved_plt_calls':call_report,
         'native_imports':len(resolved),
+        'dynamic_symbol_census':symbol_census,
         'scope':('Raw ELF imports, callsites and strings only; does not establish '
                  'runtime execution or DEC-specific root check.')
     }
