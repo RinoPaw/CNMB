@@ -21,6 +21,12 @@ CONFIG_STREAM_VA = 0x12415b
 XOR_BYTE = 0xac
 # ABI and parser instruction observations in original inner ELF.
 WORDS = {
+    0x14a54: 0xd00008b6,  # adrp x22, 0x12a000
+    0x14a58: 0x911102d6,  # add x22,x22,#0x440 (embedded config destination)
+    0x14a5c: 0x90000881,  # adrp x1, 0x124000 embedded data page
+    0x1dfb8: 0xf946e273,  # ldr x19,[x19,#0xdc0] (relocated runtime pointer slot)
+    0x1dfbc: 0xf9400261,  # ldr x1,[x19] (runtime-owned config pointer)
+    0x1dfc4: 0xf9400268,  # ldr x8,[x19] (later flag read from runtime object)
     0x14afc: 0x900000a2,  # adrp x2, 0x28000
     0x14b08: 0x91056c21,  # add x1,x1,#0x15b => blob VA 0x12415b
     0x14b0c: 0x911c3042,  # add x2,x2,#0x70c => decoder 0x2870c
@@ -150,6 +156,14 @@ def audit(inner):
                                 "callback_flag":"0x04",
                                 "callback_slot_if_on_disk_value_used":
                                 hex(selected)},
+        "storage_boundary":{
+            "embedded_config_destination_va":"0x12a440",
+            "later_runtime_pointer_slot_va":"0x128000",
+            "relationship_proven":False,
+            "note":("Embedded serialization destination and later runtime pointer "
+                    "slot have different addresses. Their dataflow and possible "
+                    "mutation remain to be verified.")
+        },
         "evidence_limit":(
             "The embedded original field is true. The later initializer reads "
             "through a separate runtime config pointer; its identity, possible "
