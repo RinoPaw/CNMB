@@ -206,6 +206,12 @@ python .\tools\audit_secneo_h_ipc.py .\path\to\original-base.apk
 python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 ~~~
 
+### SecNeo Messenger Service 绑定路径及默认守卫（2026-10-24）
+
+原版 H 类初始化把 `PC_FLAG` 设置为字符串 **`"255"`**，`AW.onCreate` 调用的 `H.callSW/ H.callBS` 会解析该值传入原生方法 `sw/bs`。内层 ELF 证明 `sw` 的 bit0（`0x2C46C`）和 `bs` 的 bit1（`0x2C90C`）为 1 时提前返回；初始值 `255` 同时满足两项，因此**不能宣称原版默认启动就会建立 Messenger 的 Service 连接**。后续可能的运行时参数变更尚未排查。
+
+通过原版 JNI 代码完整恢复被守卫的服务绑定流程：格式串 **`%s/IsoService`**（类名前缀来自运行时对象 `+0x40`）、`Intent(Context,Class)`、`Context.bindService(Intent,ServiceConnection,BIND_AUTO_CREATE)`；接收 what=1000 回复后可走 `Context.unbindService(H.sConnection)`。原版基础 APK 的 Manifest 共 78 个 Service 声明，**没有任何名称以 `IsoService` 结尾**。此项只约束当前原版基础包，未知其他运行时安装状态；远端 `arg2` 实际数值、成功绑定及 DEC 因果关系仍未证明。[原版四项 JNI 注册、绑定守卫与 Manifest 证据](docs/12.5.5-secneo-messenger-service-binding.md)；[可复核工具](tools/audit_inner_h_service_lifecycle.py)。
+
 ### 原版 SecNeo 消息回调接入原生 he(int)（2026-10-24）
 
 原版基础 `classes.dex` 已直接确认：
