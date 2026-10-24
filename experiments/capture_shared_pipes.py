@@ -22,7 +22,7 @@ from capture_loaded_modules import (
 PIPE_ROW = re.compile(r"^(?P<pid>\d+)\s+(?P<fd>\d+)\s+(?P<inode>\d+)\s+(?P<flags>[0-7]+|-)$")
 MAX_PID_COUNT = 20
 PROBE_ROW = re.compile(
-    r"^STAT (?P<pid>\d+) (?P<exists>[01]) (?P<readable>[01]) "
+    r"^STAT (?P<pid>\d+|SELF) (?P<exists>[01]) (?P<readable>[01]) "
     r"(?P<searchable>[01]) (?P<globs>\d+) (?P<links>\d+) "
     r"(?P<resolved>\d+) (?P<pipes>\d+)$")
 PS_UID_ROW = re.compile(r"^\s*(?P<pid>\d+)\s+(?P<ppid>\d+)\s+(?P<uid>\d+)\s+(?P<name>\S+)\s*$")
@@ -31,7 +31,13 @@ PS_UID_ROW = re.compile(r"^\s*(?P<pid>\d+)\s+(?P<ppid>\d+)\s+(?P<uid>\d+)\s+(?P<
 # Only 'pipe:[inode]' links are printed. No sockets, names, paths or content.
 READ_PIPES = r"""
 for pid in %(pids)s; do
-  fd_dir=/proc/$pid/fd
+  if [ "$pid" = SELF ]; then
+    fd_dir=/proc/self/fd
+    fdinfo_dir=/proc/self/fdinfo
+  else
+    fd_dir=/proc/$pid/fd
+    fdinfo_dir=/proc/$pid/fdinfo
+  fi
   exists=0
   readable=0
   searchable=0
@@ -57,7 +63,7 @@ for pid in %(pids)s; do
         fd=${path##*/}
         inode=${target#pipe:[}
         inode=${inode%%]}
-        flags=$(sed -n 's/^flags:[[:space:]]*//p' "/proc/$pid/fdinfo/$fd" 2>/dev/null)
+        flags=$(sed -n 's/^flags:[[:space:]]*//p' "$fdinfo_dir/$fd" 2>/dev/null)
         [ -n "$flags" ] || flags=-
         printf '%%s %%s %%s %%s\n' "$pid" "$fd" "$inode" "$flags"
         ;;
@@ -109,13 +115,13 @@ def parse_probe_stats(raw, pids):
     Counters emitted by the shell demonstrate that its loop finished, but
     only glob and readlink successes prove FD enumeration actually happened.
     """
-    expected = set(pids)
+    expected = {str(pid) for pid in pids}
     samples = {}
     for line in raw.splitlines():
         match = PROBE_ROW.fullmatch(line.strip())
         if not match:
             continue
-        pid = int(match.group("pid"))
+        pid = match.group("pid")
         if pid not in expected or pid in samples:
             continue
         exists, readable, searchable = (
@@ -199,8 +205,8 @@ def read_pipe_fds(pids):
                    timeout=6)
 
 
-def diagnose_fd_access(package):
-    """Read-only, single-shot comparison of su shell FD and target FD access.
+def diagnose_fd_access(package, launch=False):
+    """Compare su self FD with target FD; launch is an explicit opt-in restart.
 
     Both probes execute under the same 'su -c' command and reveal only
     aggregate counts. Zero target links alone cannot identify the denying
@@ -208,6 +214,9 @@ def diagnose_fd_access(package):
     """
     if run_adb("shell", "su", "-c", "id -u", timeout=5).strip() != "0":
         raise RuntimeError("root uid not available")
+    if launch:
+        run_adb("shell", "am", "force-stop", package, timeout=8)
+        run_adb("shell", "monkey", "-p", package, "1", timeout=10)
     ps = run_adb("shell", "ps", "-A", "-o", "PID,PPID,UID,NAME", timeout=5)
     parents, identities, _ = select_app_uid_processes(ps, package)
     target_pids = sorted(
@@ -216,14 +225,11 @@ def diagnose_fd_access(package):
     # Single target is sufficient for the read-only access diagnosis.
     target_pids = target_pids[:1]
     command = READ_PIPES % {
-        "pids": "$" + "".join(f" {pid}" for pid in target_pids)}
+        "pids": "SELF" + "".join(f" {pid}" for pid in target_pids)}
     raw = run_adb("shell", "su", "-c", command, timeout=6)
-    seen = {int(match.group("pid")) for line in raw.splitlines()
-            if (match := PROBE_ROW.fullmatch(line.strip()))}
-    self_pids = seen - set(target_pids)
-    self_probe = parse_probe_stats(raw, self_pids)
+    self_probe = parse_probe_stats(raw, {"SELF"})
     target_probe = parse_probe_stats(raw, target_pids)
-    self_ok = (len(self_pids) == 1
+    self_ok = (self_probe["probes_complete"]
                and self_probe["fd_readlink_success_count"] > 0)
     target_ok = (bool(target_pids) and target_probe["probes_complete"]
                  and target_probe["fd_readlink_success_count"] > 0)
@@ -260,7 +266,7 @@ def diagnose_fd_access(package):
         },
         "interpretation": (
             "Compares the current su shell with a target-package PID in one "
-            "privileged command; no reboot or app changes. A denied target "
+            "privileged command; app restart occurs only with explicit --launch. A denied target "
             "may reflect procfs permission, SELinux, kernel ptrace rules, "
             "or process-specific restrictions. No pipe contents were read.")
     }
@@ -389,18 +395,16 @@ def main():
     parser.add_argument("--launch", action="store_true",
                         help="force-stop and relaunch target app (opt-in)")
     parser.add_argument("--diagnose-access", action="store_true",
-                        help="single-shot non-restarting comparison of root and app FD access")
+                        help="compare root-self and target FD access; optional --launch restarts app")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if not SAFE_PACKAGE.fullmatch(args.package):
         parser.error("invalid package name")
-    if args.diagnose_access and args.launch:
-        parser.error("--diagnose-access is non-restarting; omit --launch")
     if not 0 < args.seconds <= 120 or not 0.1 <= args.poll_seconds <= 10:
         parser.error("seconds must be 0..120, poll-seconds 0.1..10")
     try:
         require_ready_device()
-        result = (diagnose_fd_access(args.package) if args.diagnose_access
+        result = (diagnose_fd_access(args.package, args.launch) if args.diagnose_access
                   else observe(args.package, args.seconds, args.poll_seconds,
                                args.launch))
     except (RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:
