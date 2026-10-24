@@ -143,28 +143,42 @@ class SharedPipesTests(unittest.TestCase):
     def test_probe_counter_parser_detects_missing_output(self):
         sample = (
             "8387 4 900 00\n"
-            "STAT 8387 120 118 3\n"
-            "STAT 8714 18 18 1\n"
-            "STAT 9999 900 900 900\n"
+            "STAT 8387 1 1 1 120 118 116 3\n"
+            "STAT 8714 1 1 1 18 18 18 1\n"
+            "STAT 9999 1 1 1 900 900 900 900\n"
         )
         counts = module.parse_probe_stats(sample, {8387, 8714})
         self.assertEqual(counts, {
             "probe_pid_count": 2,
             "probes_complete": True,
-            "fd_symlink_count": 138,
-            "fd_readlink_success_count": 136,
+            "fd_dir_exists_count": 2,
+            "fd_dir_readable_count": 2,
+            "fd_dir_searchable_count": 2,
+            "fd_glob_match_count": 138,
+            "fd_symlink_count": 136,
+            "fd_readlink_success_count": 134,
             "pipe_target_count": 4,
         })
-        incomplete = module.parse_probe_stats("STAT 8387 120 0 0\n", {8387, 8714})
+        incomplete = module.parse_probe_stats(
+            "STAT 8387 1 0 0 0 0 0 0\n", {8387, 8714})
         self.assertFalse(incomplete["probes_complete"])
         self.assertEqual(incomplete["fd_readlink_success_count"], 0)
         self.assertEqual(module.parse_probe_stats("", {8387})["probe_pid_count"], 0)
 
     def test_probe_counter_rejects_inconsistent_claims(self):
         self.assertFalse(module.parse_probe_stats(
-            "STAT 8387 1 2 0\n", {8387})["probes_complete"])
+            "STAT 8387 1 1 1 1 2 0 0\n", {8387})["probes_complete"])
         self.assertFalse(module.parse_probe_stats(
-            "STAT 8387 4 1 2\n", {8387})["probes_complete"])
+            "STAT 8387 1 1 1 4 1 2 3\n", {8387})["probes_complete"])
+
+    def test_silent_directory_denial_is_not_usable_fd_coverage(self):
+        ps = module.parse_probe_stats(
+            "STAT 8387 1 0 0 0 0 0 0\n"
+            "STAT 8714 0 0 0 0 0 0 0\n", {8387, 8714})
+        self.assertTrue(ps["probes_complete"])
+        self.assertEqual(ps["fd_dir_readable_count"], 0)
+        self.assertEqual(ps["fd_glob_match_count"], 0)
+        self.assertEqual(ps["fd_readlink_success_count"], 0)
 
     def test_fd_scanner_reports_real_pipe_and_probe_on_linux(self):
         import os
