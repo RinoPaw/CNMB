@@ -181,7 +181,9 @@ python .\experiments\correlate_reboot_h_entry.py "$HOME\Downloads\CNMB-after-reb
 
 ### TracerPid 阳性后的条件文件读写
 
-进一步审计原版内层 ELF 确认，在 `TracerPid>=1` 且运行时配置 bit0=1 后，`0x2616c` 构造路径，`0x2682c` 执行包含 `fopen/fgets` 的条件检查，满足条件后 `0x5af68` 调用 `0x26bc0`。后者具有 `access/fopen/flock/fgets`、数据比较和有条件的 `fseek/fwrite/fflush` 流程。**确认了可能修改文件的原版代码路径；目标文件身份、设备运行时是否执行和 DEC 因果关系尚未证明。** [完整静态证据](docs/12.5.5-secneo-h-positive-file-update.md)；[只读原版审计](tools/audit_inner_h_followup_file_io.py)。
+进一步审计原版内层 ELF 确认，在 `TracerPid>=1` 且运行时配置 bit0=1 后，`0x2616c(1)` 构造记录键 `root`，`0x2682c` 从 `envc.push` 读取已有状态；满足条件时 `0x5af68` 调用 `0x26bc0` 更新同一个文件。后者具有 `access/fopen/flock/fgets`、数据比较和有条件的 `fseek/fwrite/fflush` 流程。**文件名和记录键已获原版证实**；目录前缀仍属于运行时数据，设备是否实际写入及 DEC 因果关系尚未证明。 [完整静态证据](docs/12.5.5-secneo-h-positive-file-update.md)；[只读原版审计](tools/audit_inner_h_followup_file_io.py)。
+
+进一步复核 83/84/48 个直接调用点时，已另外逐条确认**五处** `root` 状态读取后条件更新的静态路径，其记录标识分别为 `0xb6a281f2`、`0xb6a281f3`、`0xb6a281f5`、`0xb6a281f7`、`0xb6a281f8`。这些标识不能直接解读为风险类别，也不代表五次设备执行。[五处原版调用点审计](tools/audit_inner_root_record_sites.py)；[证据表](docs/12.5.5-secneo-h-envc-push-root-record.md)。
 
 ### 原版配置进一步闭合：`+0x17c` 的初始值为 13
 
