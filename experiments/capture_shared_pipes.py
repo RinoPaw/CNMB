@@ -63,7 +63,7 @@ for pid in %(pids)s; do
         ;;
     esac
   done
-  printf 'STAT %%s %%s %%s %%s %%s %%s %%s %%s %%s\n' "$pid" "$exists" "$readable" "$searchable" "$globs" "$links" "$resolved" "$pipes"
+  printf 'STAT %%s %%s %%s %%s %%s %%s %%s %%s\n' "$pid" "$exists" "$readable" "$searchable" "$globs" "$links" "$resolved" "$pipes"
 done
 """
 
