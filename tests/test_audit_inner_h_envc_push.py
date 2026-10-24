@@ -33,6 +33,23 @@ class HEnvcPushTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "decoded indexed string"):
                 subject.decode_loads(b"", char_table, sites, base, 8, chars)
 
+    def test_read_record_prefix_and_hex_parser_sites(self):
+        chars = bytes(range(32,127))
+        prefix = "%s="
+        sites = subject.READER_FORMAT_SITES
+        fake_words = {
+            pc: 0x39400008 | (8 << 5) | ((ord(char)-32-5) << 10)
+            for pc,char in zip(sites,prefix)
+        }
+        with patch.object(subject,"insn",
+                          side_effect=lambda elf,pc:fake_words[pc]):
+            self.assertEqual(subject.decode_loads(
+                b"",chars,sites,5,8,prefix),prefix)
+        self.assertEqual(subject.PINNED[0x26b4c],0x52800202)
+        self.assertEqual(subject.PINNED[0x26b50],0x5100c116)
+        self.assertEqual(subject.PINNED[0x26b54],0x97ffa0af)
+        self.assertEqual(subject.PINNED[0x26b90],0x2a1603e0)
+
     def test_selector_one_skips_usb_assignment(self):
         elf = bytearray(64)
         elf[12] = 1
