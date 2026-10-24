@@ -21,16 +21,24 @@ from capture_loaded_modules import (
 
 PIPE_ROW = re.compile(r"^(?P<pid>\d+)\s+(?P<fd>\d+)\s+(?P<inode>\d+)\s+(?P<flags>[0-7]+|-)$")
 MAX_PID_COUNT = 20
+PROBE_ROW = re.compile(r"^STAT (?P<pid>\d+) (?P<paths>\d+) (?P<resolved>\d+) (?P<pipes>\d+)$")
 PS_UID_ROW = re.compile(r"^\s*(?P<pid>\d+)\s+(?P<ppid>\d+)\s+(?P<uid>\d+)\s+(?P<name>\S+)\s*$")
 
 # PIDs are coerced to positive integers and cannot inject shell syntax.
 # Only 'pipe:[inode]' links are printed. No sockets, names, paths or content.
 READ_PIPES = r"""
 for pid in %(pids)s; do
+  paths=0
+  resolved=0
+  pipes=0
   for path in /proc/$pid/fd/*; do
+    [ -L "$path" ] || continue
+    paths=$((paths + 1))
     target=$(readlink "$path" 2>/dev/null) || continue
+    resolved=$((resolved + 1))
     case "$target" in
       pipe:\[*\])
+        pipes=$((pipes + 1))
         fd=${path##*/}
         inode=${target#pipe:[}
         inode=${inode%%]}
@@ -40,6 +48,7 @@ for pid in %(pids)s; do
         ;;
     esac
   done
+  printf 'STAT %%s %%s %%s %%s\n' "$pid" "$paths" "$resolved" "$pipes"
 done
 """
 
@@ -77,6 +86,31 @@ def select_app_uid_processes(ps_output, package, known_uid=None):
                          else "same_uid_other_name")
                   for pid, ppid, row_uid, name in rows if row_uid == uid}
     return parents, identities, uid
+
+
+def parse_probe_stats(raw, pids):
+    """Summarize scanner coverage; omit all inode values and proc paths."""
+    expected = set(pids)
+    samples = {}
+    for line in raw.splitlines():
+        match = PROBE_ROW.fullmatch(line.strip())
+        if not match:
+            continue
+        pid = int(match.group("pid"))
+        if pid not in expected or pid in samples:
+            continue
+        paths, resolved, pipes = (
+            int(match.group(k)) for k in ("paths", "resolved", "pipes"))
+        if resolved > paths or pipes > resolved:
+            continue
+        samples[pid] = (paths, resolved, pipes)
+    return {
+        "probe_pid_count": len(samples),
+        "probes_complete": len(samples) == len(expected),
+        "fd_symlink_count": sum(x[0] for x in samples.values()),
+        "fd_readlink_success_count": sum(x[1] for x in samples.values()),
+        "pipe_target_count": sum(x[2] for x in samples.values()),
+    }
 
 
 def access_mode(flags):
@@ -159,6 +193,11 @@ def observe(package, seconds, interval, launch=False):
         "fd_queries": 0,
         "fd_queries_with_pipe_rows": 0,
         "total_pipe_fd_rows": 0,
+        "verified_fd_probe_polls": 0,
+        "incomplete_fd_probe_polls": 0,
+        "total_fd_symlinks_seen": 0,
+        "total_fd_readlinks_succeeded": 0,
+        "total_pipe_symlinks_seen": 0,
         "max_candidate_pids": 0,
         "max_pipe_fd_rows_in_one_poll": 0
     }
@@ -182,6 +221,16 @@ def observe(package, seconds, interval, launch=False):
                 stats["polls_with_two_or_more_candidates"] += 1
                 raw = read_pipe_fds(parents.keys())
                 stats["fd_queries"] += 1
+                probe = parse_probe_stats(raw, parents.keys())
+                if probe["probes_complete"]:
+                    stats["verified_fd_probe_polls"] += 1
+                else:
+                    stats["incomplete_fd_probe_polls"] += 1
+                    errors.append({"t": round(now, 3),
+                                   "kind": "fd_probe_incomplete"})
+                stats["total_fd_symlinks_seen"] += probe["fd_symlink_count"]
+                stats["total_fd_readlinks_succeeded"] += probe["fd_readlink_success_count"]
+                stats["total_pipe_symlinks_seen"] += probe["pipe_target_count"]
                 row_count = sum(1 for line in raw.splitlines()
                                 if PIPE_ROW.fullmatch(line.strip()))
                 stats["total_pipe_fd_rows"] += row_count
@@ -211,6 +260,8 @@ def observe(package, seconds, interval, launch=False):
             "Capture selects exact package PIDs plus any peers sharing their confirmed numeric UID.",
             "An equal UID is an identity candidate, not proof a process belongs to SecNeo.",
             "The statistics count scans even when shared_links did not change.",
+            "Every scanned PID emits STAT coverage counters; missing probes are flagged.",
+            "A zero pipe row result is inconclusive if FD symlink enumeration/readlink failed.",
             "Pipe names are per-capture labels. Raw inode values and path strings are not exported.",
             "Matching inode is not evidence of original parent, contents or DEC causality.",
             "No match can mean transient close, missed window, unavailable permissions or alternate IPC.",
