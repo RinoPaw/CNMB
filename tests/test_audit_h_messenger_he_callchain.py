@@ -25,14 +25,15 @@ def artificial_base_dex():
     for i,(cl,typ,name) in enumerate(fields,3):
         struct.pack_into("<HHI",b,0x300+8*i,cl,typ,name)
     code_indices={subject.SENDER:0x518c,
-                  subject.RECEIVER:0x41fc, subject.DELEGATE:0x4af0}
-    size={0x518c:73,0x41fc:42,0x4af0:17}
+                  subject.RECEIVER:0x41fc, subject.DELEGATE:0x4af0,
+                  subject.INITIALIZER:0x427c}
+    size={0x518c:73,0x41fc:42,0x4af0:17,0x427c:73}
     for off,count in size.items():
         struct.pack_into("<I",b,off+12,count)
     struct.pack_into("<I",b,0x200+12,1)
-    # Scanning 65 bodies: three original-size code items + 62 inert ones.
+    # Scanning 65 bodies: four original-size code items + 61 inert ones.
     codes=[(key,i,off) for i,(key,off) in enumerate(code_indices.items())]
-    for i in range(62):
+    for i in range(61):
         codes.append((("Lfaketest;",str(i),"()V"),i+3,0x200))
     types=["Landroid/os/Message;","I","Landroid/os/Messenger;"]
     names=["arg1","arg2","replyTo","what"]
@@ -52,6 +53,8 @@ class SecneoMessengerRouteTests(unittest.TestCase):
         self.assertEqual(subject.WORDS[0x422c],1000)
         self.assertEqual(subject.WORDS[0x5228],55)
         self.assertEqual(subject.WORDS[0x4b1c],141)
+        self.assertEqual(subject.WORDS[0x4304],154)
+        self.assertEqual(subject.CODE_OFFSETS[subject.INITIALIZER],0x427c)
 
     def test_complete_flow_with_synthetic_dex(self):
         b,types,names,methods,codes=artificial_base_dex()
@@ -62,6 +65,7 @@ class SecneoMessengerRouteTests(unittest.TestCase):
             report=subject.pin_source(bytes(b))
         self.assertEqual(report["validated_code_items"],65)
         self.assertIn("Message.arg2",report["receiver"]["forwards"])
+        self.assertIn("H.<clinit>",report["service_connection_created"])
         self.assertIn("Message.arg1",report["sender"]["sets_arg1"])
         self.assertEqual(len(report["direct_calls_to_six_native_methods_in_base_dex"]),1)
         self.assertEqual(report["direct_calls_to_six_native_methods_in_base_dex"][0]["callee"],"he")
