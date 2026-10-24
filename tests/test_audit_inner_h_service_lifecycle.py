@@ -52,6 +52,29 @@ class SecneoServiceLifecycleTests(unittest.TestCase):
         self.assertEqual(actual,["%s/IsoService","bindService",
                                  "unbindService","BIND_AUTO_CREATE"])
 
+    def test_four_native_method_names_from_synthetic_original_style_ldr(self):
+        names=(("sw",(0x152d8,0x152ec)),
+               ("bs",(0x153fc,0x1540c)),
+               ("is",(0x15474,0x15488)),
+               ("us",(0x154d8,0x154e4)))
+        instructions={}
+        for name,sites in names:
+            for pc,char in zip(sites,name):
+                instructions[pc]=0x39400388|((ord(char)-32-8)<<10)
+        with patch.object(audit,"elf_word",
+                          side_effect=lambda elf,pc:instructions[pc]):
+            self.assertEqual(
+                [audit.native_registration_name(
+                    b"synthetic",bytes(range(32,127)),sites)
+                 for name,sites in names],
+                [name for name,sites in names])
+        instructions[0x154d8]=0x39400389
+        with patch.object(audit,"elf_word",
+                          side_effect=lambda elf,pc:instructions[pc]):
+            with self.assertRaisesRegex(ValueError,"method-name LDRB"):
+                audit.native_registration_name(
+                    b"",bytes(range(32,127)),(0x154d8,0x154e4))
+
     def test_corrupted_original_ldr_operand_is_rejected(self):
         with patch.object(audit,"elf_word",return_value=0x39400008):
             with self.assertRaisesRegex(ValueError,"LDRB operands"):
