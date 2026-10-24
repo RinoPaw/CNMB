@@ -31,6 +31,8 @@ WORDS = {
     0x174ac:0xd63f0100,
     0x174b0:0xf900b2c0, # publish class ref in runtime instance +0x160
     0x16010:0xf940b115, # same instance +0x160 -> x21
+    0x160cc:0x911103ea, # first method descriptor buffer sp+0x440
+    0x160f4:0xf90023e9, # first method name pointer [sp+0x40]
     0x1610c:0x910103e2, # JNINativeMethod array at sp+0x40
     0x16118:0x528000c3, # six methods in this registration
     0x16120:0xaa1503e1, # same class x21
@@ -38,6 +40,8 @@ WORDS = {
     0x16104:0x911e9129, # add 0x7a4 -> 0x367a4
     0x161c0:0xa904a7ea, # first method signature and callback ptr
     0x161c4:0x90000109, # second JNI callback page
+    0x161d0:0x911d43ea, # second method descriptor buffer sp+0x750
+    0x161ec:0xf9002ff6, # second method name pointer [sp+0x58]
     0x161d4:0x91205129, # add 0x814 -> 0x36814
     0x1629c:0xa90627ea, # second method signature and callback ptr
     0x164f4:0xf9400288,
