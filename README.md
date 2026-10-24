@@ -206,6 +206,16 @@ python .\tools\audit_secneo_h_ipc.py .\path\to\original-base.apk
 python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 ~~~
 
+### 原版 SecNeo 消息回调接入原生 he(int)（2026-10-24）
+
+原版基础 `classes.dex` 已直接确认：
+
+`b.onServiceConnected → Message.obtain(what=1000)`，将 `Process.myPid()` 赋给 `Message.arg1`、将 `H.a()` 取得的 Messenger 赋给 `replyTo`，随后通过 `H.b()` 取得的 Messenger 调用 `send`。另有 `H$a.handleMessage` 接收 `what=1000` 时把收到的 `Message.arg2` 传给 `H.c(int)`，再由其直接执行 `invoke-static H.he(int)`，原始 JNI 注册将该方法绑定至 `0x36F4C`。**发送端写入 `arg1`，接收端使用 `arg2`；远端服务回复内容尚未恢复**，不得当成已经验证的 PID 回显。
+
+同一 `JNI_OnLoad` 六项注册表已恢复完整方法签名和地址：`gha`、`ghc`、`gah`、`sha`、`he`、`gv`；其中 `sha(String,int)` 直接接入 `0x26BC0` 的记录更新函数，`he(int)` 包含配置守卫及 `_exit` 等原版静态路径。[Messenger/完整 JNI 注册证据](docs/12.5.5-secneo-h-messenger-native-route.md)；[六项 JNI 审计](tools/audit_inner_h_jni_full_registration.py)；[Message→he 审计](tools/audit_h_messenger_he_callchain.py)。
+
+对原版 `libdatajar.so` **14 组** DEX 元数据的新增核验覆盖 101,716 条类定义、133,981 个类型 ID、758,948 个方法 ID：这些片段未包含精确的 `Lcom/secneo/apkwrapper/H;`、`gha` 或 `ghc` 符号，排除了**该限定范围内**直接编码 `H.gha/ghc` 引用的可能。运行时动态生成/加载 DEX、反射或其他 JNI 调用不在此阴性结果覆盖范围内。[14 组方法引用审计](tools/audit_secneo_h_getter_dex_refs.py)。
+
 ### Java Native 可查询 envc.push 的状态和标识（2026-10-24）
 
 原版内层 `libDexHelper.so` 的 `JNI_OnLoad` 注册表和固定 SHA-256 的 `classes.dex` 已交叉验证：默认 `com.secneo.apkwrapper.H` 声明了 `gha(String): int`、`ghc(String): long` 两个 Native 接口，分别对应 `0x367a4`、`0x36814`。两个函数都直接调用 `0x2682c` 读取 `envc.push`，前者返回状态低八位，后者返回记录中十六进制标识的零扩展 32 位值。原版 `JNI_OnLoad` 使用 `RegisterNatives` 将它们绑定到通过运行时类名创建的 Java 类引用；运行时类名覆盖仍可能存在。
