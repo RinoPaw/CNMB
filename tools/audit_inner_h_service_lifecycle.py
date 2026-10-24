@@ -17,7 +17,7 @@ from audit_nested_elf import APK_SHA, SAMPLES, recover, bl_target
 from audit_inner_app_process_argv import decode_table, elf_file_offset
 from audit_inner_h_guard_config import adrp_page
 from audit_secneo_h_ipc import DEX_SHA, H, metadata, u16, u32
-from audit_h_messenger_he_callchain import pin_source
+from audit_h_messenger_he_callchain import pin_source, code_items
 
 INNER_SHA = SAMPLES["libDexHelper.so"]["inner_sha"]
 # The four additional H JNI natives, separate from the previously
@@ -209,6 +209,35 @@ def manifest_service_names(xml):
     return result
 
 
+def direct_pc_flag_sites(dex, methods, types):
+    """Scoped 16-bit aligned field instruction census within real code_items.
+
+    A scan of syntactically plausible opcode words is deliberately not a
+    complete Dalvik disassembler. For each of these pinned source locations
+    we independently check the exact instruction with DEX_WORDS.
+    """
+    results=[]
+    for caller,mid,off in code_items(dex,methods,types):
+        units=u32(dex,off+12)
+        if not 0<units<100000 or off+16+units*2>len(dex):
+            raise ValueError("invalid original PC_FLAG code item")
+        for pos in range(off+16,off+16+units*2-3,2):
+            opcode=u16(dex,pos)&0xff
+            if opcode not in (0x62,0x69):
+                continue
+            if u16(dex,pos+2)==11:
+                results.append((pos,opcode))
+    results.sort()
+    if results!=[(0x42f0,0x69),(0x4bda,0x62),(0x4c36,0x62)]:
+        raise ValueError("original direct PC_FLAG field use census changed")
+    return {
+        "scope":"original base classes.dex 65 code_items; aligned 16-bit field opcode candidates only",
+        "direct_writes":["0x42f0 H.<clinit>"],
+        "direct_reads":["0x4bda H.callBS","0x4c36 H.callSW"],
+        "reflective_native_or_loaded_dex_writes_excluded":True,
+    }
+
+
 def audit(elf,dex,manifest):
     if hashlib.sha256(elf).hexdigest()!=INNER_SHA:
         raise ValueError("original inner ELF SHA-256 mismatch")
@@ -219,6 +248,7 @@ def audit(elf,dex,manifest):
     for pc,w in DEX_WORDS.items():
         if u16(dex,pc)!=w:raise ValueError("changed original Java bytecode "+hex(pc))
     strings,types,methods=metadata(dex)
+    field_sites=direct_pc_flag_sites(dex,methods,types)
     if (strings[14]!="255" or methods[127] !=
             (H,"bs","(Landroid/content/Context;I)Ljava/lang/Object;")):
         raise ValueError("original PC_FLAG or bs declaration changed")
@@ -259,6 +289,7 @@ def audit(elf,dex,manifest):
         "original_inner_elf_sha256":INNER_SHA,
         "original_classes_dex_sha256":DEX_SHA,
         "default_flag":"255 (0xff) from H.<clinit> at 0x42ec",
+        "PC_FLAG_base_dex_direct_field_sites":field_sites,
         "java_callers":{
             "H.callSW":"Integer.parseInt(H.PC_FLAG) -> H.sw(Context,int)",
             "H.callBS":"Integer.parseInt(H.PC_FLAG) -> H.bs(Context,int)",
