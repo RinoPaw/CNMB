@@ -110,6 +110,25 @@ class SecneoServiceLifecycleTests(unittest.TestCase):
         self.assertEqual(audit.manifest_service_names(data),
                          ["com.test.NormalService"])
 
+    def test_scoped_pc_flag_direct_field_sites(self):
+        # Three independent synthetic code_items, no original DEX bytes.
+        data=bytearray(0x5300)
+        items=[(("LH;","<clinit>","()V"),108,0x427c,65),
+               (("LH;","callBS","()V"),130,0x4bb0,23),
+               (("LH;","callSW","()V"),131,0x4c0c,23)]
+        for caller,mid,off,units in items:
+            struct.pack_into("<I",data,off+12,units)
+        for pc,opcode in ((0x42f0,0x69),(0x4bda,0x62),(0x4c36,0x62)):
+            struct.pack_into("<HH",data,pc,opcode,11)
+        fake_items=[(caller,mid,off) for caller,mid,off,units in items]
+        with patch.object(audit,"code_items",return_value=fake_items):
+            result=audit.direct_pc_flag_sites(bytes(data),[],[])
+            self.assertEqual(len(result["direct_writes"]),1)
+            self.assertEqual(len(result["direct_reads"]),2)
+            struct.pack_into("<H",data,0x42f2,12)
+            with self.assertRaisesRegex(ValueError,"PC_FLAG field use census"):
+                audit.direct_pc_flag_sites(bytes(data),[],[])
+
     def test_manifest_unresolvable_name_and_invalid_blob_fail_closed(self):
         with self.assertRaisesRegex(ValueError,"header"):
             audit.manifest_service_names(b"")
