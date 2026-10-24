@@ -36,7 +36,7 @@ for pid in %(pids)s; do
         inode=${inode%%]}
         flags=$(sed -n 's/^flags:[[:space:]]*//p' "/proc/$pid/fdinfo/$fd" 2>/dev/null)
         [ -n "$flags" ] || flags=-
-        printf '%%s %%s %%s %%s\\n' "$pid" "$fd" "$inode" "$flags"
+        printf '%%s %%s %%s %%s\n' "$pid" "$fd" "$inode" "$flags"
         ;;
     esac
   done
