@@ -206,6 +206,12 @@ python .\tools\audit_secneo_h_ipc.py .\path\to\original-base.apk
 python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 ~~~
 
+### Java Native 可查询 envc.push 的状态和标识（2026-10-24）
+
+原版内层 `libDexHelper.so` 的 `JNI_OnLoad` 注册表和固定 SHA-256 的 `classes.dex` 已交叉验证：默认 `com.secneo.apkwrapper.H` 声明了 `gha(String): int`、`ghc(String): long` 两个 Native 接口，分别对应 `0x367a4`、`0x36814`。两个函数都直接调用 `0x2682c` 读取 `envc.push`，前者返回状态低八位，后者返回记录中十六进制标识的零扩展 32 位值。原版 `JNI_OnLoad` 使用 `RegisterNatives` 将它们绑定到通过运行时类名创建的 Java 类引用；运行时类名覆盖仍可能存在。
+
+**现在已经证明 Java 层具备读取原生状态记录的接口。** 在原版基础 `classes.dex` 的代码项内没有找到针对这两个方法的直接 `invoke-*` 候选。调用它们的具体业务代码、DEC 是否消费这些值以及设备执行情况仍待验证。[完整 JNI 与 DEX 证据](docs/12.5.5-secneo-h-java-native-record-getters.md)；[只读静态工具](tools/audit_inner_h_jni_record_getters.py)。
+
 ### SecNeo H 的本地 root 状态记录（2026-10-24）
 
 继续从已验证的 H TracerPid 正结果分支追踪，原版证实了本地持久化记录函数：0x2616c(1) 通过真实 AArch64 跳转表映射到键名 **root**，0x2682c 查询同一路径下的 **envc.push**，0x26bc0 在特定返回值条件允许时通过带独占锁的文件更新链回写该记录。两处原版状态上报路径分别是 0x5af68（格式参数标识 0xb6a281fb）和 0x5b40c（0xb6a281f1）。读端的原版字符串格式是 %s= 加一位状态数字、随后用 strtoul(...,16) 解析标识字段。
