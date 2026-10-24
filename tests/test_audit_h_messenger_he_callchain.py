@@ -37,7 +37,7 @@ def artificial_base_dex():
         codes.append((("Lfaketest;",str(i),"()V"),i+3,0x200))
     types=["Landroid/os/Message;","I","Landroid/os/Messenger;"]
     names=["arg1","arg2","replyTo","what"]
-    methods=[("Lfaketest;",str(i),"()V") for i in range(147)]
+    methods=[("Lfaketest;",str(i),"()V") for i in range(155)]
     for idx,val in subject.METHOD_REFS.items():
         methods[idx]=val
     return b,types,names,methods,codes
