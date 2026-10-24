@@ -175,6 +175,10 @@ python .\experiments\correlate_reboot_h_entry.py "$HOME\Downloads\CNMB-after-reb
 
 工具拒绝跨天拼接和多会话歧义，输出仅含允许的 PID、UID、时间与证据边界。原始日志保留在本地。 **`CNMB-after-reboot.txt` 是私有设备日志，不包含在 GitHub 仓库中。使用前须从之前保存的原始采集文件恢复；若路径不存在，工具会给出明确的缺失文件提示。**详情：[H 入口与路由核验](docs/2026-10-22-runtime-h-entry-confirmation.md)。
 
+### TracerPid 回传后的原版 native 分支
+
+在原始内层 `libDexHelper.so` 的 `0x5ae38`，接收到的 `H` 结果交给 `atoi`；`0x5ae3c/0x5ae40` 对其执行 `cmp w0,#1` 和 `b.lt 0x5af6c`。当结果 `>=1` 时，`0x5ae50/0x5ae54` 读取运行时对象的 `+0x17c` 字节并检查 bit 0。bit 0=1 跳至 `0x5af18`；bit 0=0 分支包含将 `SP/LR` 置零并通过 `br x10` 跳至低地址 `0x1f8` 的原版机器指令。稍后的 `0x5b344` 存在相似的 bit 0 判断，其另一分支目标为 `0x1f0`。**这些是已验证静态路径，尚未证明设备曾实际执行，也尚未证明 DEC/Frida 归因。** [全部地址与边界](docs/12.5.5-secneo-h-result-guard-branch.md)；[只读验证工具](tools/audit_inner_h_result_branch.py)。
+
 ### 原版 SecNeo H 检查结果的双向管道链路（2026-10-24）
 
 原版 `classes.dex` 与恢复的内层 ELF 已分别独立验哈希，并恢复出一条**静态闭合**的 SecNeo 辅助进程检查通信链：
