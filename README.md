@@ -179,6 +179,12 @@ python .\experiments\correlate_reboot_h_entry.py "$HOME\Downloads\CNMB-after-reb
 
 在原始内层 `libDexHelper.so` 的 `0x5ae38`，接收到的 `H` 结果交给 `atoi`；`0x5ae3c/0x5ae40` 对其执行 `cmp w0,#1` 和 `b.lt 0x5af6c`。当结果 `>=1` 时，`0x5ae50/0x5ae54` 读取运行时对象的 `+0x17c` 字节并检查 bit 0。bit 0=1 跳至 `0x5af18`；bit 0=0 分支包含将 `SP/LR` 置零并通过 `br x10` 跳至低地址 `0x1f8` 的原版机器指令。稍后的 `0x5b344` 存在相似的 bit 0 判断，其另一分支目标为 `0x1f0`。**这些是已验证静态路径，尚未证明设备曾实际执行，也尚未证明 DEC/Frida 归因。** [全部地址与边界](docs/12.5.5-secneo-h-result-guard-branch.md)；[只读验证工具](tools/audit_inner_h_result_branch.py)。
 
+### 原版配置进一步闭合：`+0x17c` 的初始值为 13
+
+通过原版 ELF 中 `JNI_OnLoad` 的数据流和 `R_AARCH64_RELATIVE` 重定位，现已证明 `0x5ae50` 访问的配置字段位于原始静态对象 `0x12a440+0x17c=0x12a5bc`。原版 `0x12415b` 的配置字节流经 `0xac` XOR 解码，48 次 MessagePack 读取调用中的 `0x14d88` 将 **整数 13** 写入该字段。初始化 bit0=1，所以在后续字段未变且 `TracerPid>=1` 时，条件跳转优先进入 `0x5af18`：依次调用 `0x2616c`、`0x2682c`，并在两段条件允许时进入 `0x26bc0`。原版 `0x3af48` 写的是另一 BSS 地址 `0x12b17c`，已排除此前的别名猜测。
+
+**这些均为初始化和静态控制流证据**；字段可能发生运行时修改，尚不能对真实设备的崩溃、DEC 弹窗或上层业务含义做归因。[完整配置、指针与后续函数审计](docs/12.5.5-secneo-h-guard-config-alias.md)；[验证工具](tools/audit_inner_h_guard_config.py)。
+
 ### 原版 SecNeo H 检查结果的双向管道链路（2026-10-24）
 
 原版 `classes.dex` 与恢复的内层 ELF 已分别独立验哈希，并恢复出一条**静态闭合**的 SecNeo 辅助进程检查通信链：
