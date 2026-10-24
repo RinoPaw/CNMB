@@ -140,6 +140,61 @@ class SharedPipesTests(unittest.TestCase):
         self.assertIn("inode=${inode%]}", command)
         self.assertNotIn("%%s", command)
 
+    def test_probe_counter_parser_detects_missing_output(self):
+        sample = (
+            "8387 4 900 00\n"
+            "STAT 8387 120 118 3\n"
+            "STAT 8714 18 18 1\n"
+            "STAT 9999 900 900 900\n"
+        )
+        counts = module.parse_probe_stats(sample, {8387, 8714})
+        self.assertEqual(counts, {
+            "probe_pid_count": 2,
+            "probes_complete": True,
+            "fd_symlink_count": 138,
+            "fd_readlink_success_count": 136,
+            "pipe_target_count": 4,
+        })
+        incomplete = module.parse_probe_stats("STAT 8387 120 0 0\n", {8387, 8714})
+        self.assertFalse(incomplete["probes_complete"])
+        self.assertEqual(incomplete["fd_readlink_success_count"], 0)
+        self.assertEqual(module.parse_probe_stats("", {8387})["probe_pid_count"], 0)
+
+    def test_probe_counter_rejects_inconsistent_claims(self):
+        self.assertFalse(module.parse_probe_stats(
+            "STAT 8387 1 2 0\n", {8387})["probes_complete"])
+        self.assertFalse(module.parse_probe_stats(
+            "STAT 8387 4 1 2\n", {8387})["probes_complete"])
+
+    def test_fd_scanner_reports_real_pipe_and_probe_on_linux(self):
+        import os
+        import subprocess
+        import sys
+        if not sys.platform.startswith("linux"):
+            self.skipTest("Linux procfs self-check")
+        # Test within our own process, which owns both ends of an os.pipe.
+        read_fd, write_fd = os.pipe()
+        try:
+            pid = os.getpid()
+            script = module.READ_PIPES % {"pids": str(pid)}
+            execution = subprocess.run(
+                ["sh", "-c", script], capture_output=True, text=True,
+                check=True, timeout=5,
+            )
+            stat = module.parse_probe_stats(execution.stdout, {pid})
+            self.assertTrue(stat["probes_complete"])
+            self.assertGreaterEqual(stat["fd_symlink_count"], 2)
+            self.assertGreaterEqual(stat["fd_readlink_success_count"], 2)
+            self.assertGreaterEqual(stat["pipe_target_count"], 2)
+            rows = module.parse_fd_rows(execution.stdout, {pid})
+            # Rows from a single PID cannot be cross-process links.
+            self.assertEqual(rows, {})
+            self.assertIn(f"{pid} {read_fd} ", execution.stdout)
+            self.assertIn(f"{pid} {write_fd} ", execution.stdout)
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
     def test_proc_flags_parsing(self):
         self.assertEqual(module.access_mode("00"), "read")
         self.assertEqual(module.access_mode("01"), "write")
