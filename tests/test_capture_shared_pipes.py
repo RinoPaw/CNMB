@@ -84,6 +84,53 @@ class SharedPipesTests(unittest.TestCase):
         finally:
             module.run_adb = original
 
+    def test_numeric_uid_peers_are_selected_without_exposing_names(self):
+        ps = ("PID PPID UID NAME\n"
+              "8387 862 10250 com.greenpoint.android.mc10086.activity\n"
+              "8714 1 10250 zygote\n"
+              "8800 8387 10250 app_process\n"
+              "995 2 1000 system_server\n"
+              "9210 1 10000 com.other.app\n")
+        parents, identities, uid = module.select_app_uid_processes(ps, module.PACKAGE)
+        self.assertEqual(uid, 10250)
+        self.assertEqual(parents, {8387: 862, 8714: 1, 8800: 8387})
+        self.assertEqual(identities, {
+            8387: "target_package",
+            8714: "same_uid_other_name",
+            8800: "same_uid_other_name"})
+        self.assertNotIn("zygote", str(identities))
+        self.assertNotIn("com.other", str(identities))
+        links = module.shared_links("8387 4 999 00\n8714 5 999 01\n",
+                                    parents, {}, identities)
+        self.assertEqual(links[0]["members"][1]["name_class"],
+                         "same_uid_other_name")
+
+    def test_uid_can_survive_transient_name_changes_but_must_be_confirmed(self):
+        ps = ("PID PPID UID NAME\n"
+              "8714 1 10250 zygote\n"
+              "995 2 1000 system_server\n")
+        parents, identities, uid = module.select_app_uid_processes(
+            ps, module.PACKAGE)
+        self.assertIsNone(uid)
+        self.assertEqual(parents, {})
+        parents, identities, uid = module.select_app_uid_processes(
+            ps, module.PACKAGE, 10250)
+        self.assertEqual(parents, {8714: 1})
+        self.assertEqual(identities[8714], "same_uid_other_name")
+        with self.assertRaises(ValueError):
+            module.select_app_uid_processes(
+                "8387 862 10251 " + module.PACKAGE, module.PACKAGE, 10250)
+
+    def test_invalid_or_nonnumeric_uid_ps_is_reported(self):
+        with self.assertRaises(ValueError):
+            module.select_app_uid_processes(
+                "PID PPID USER NAME\n8387 862 u0_a250 " + module.PACKAGE,
+                module.PACKAGE)
+        parents, _, uid = module.select_app_uid_processes(
+            "995 2 1000 system_server", module.PACKAGE)
+        self.assertEqual(parents, {})
+        self.assertIsNone(uid)
+
     def test_proc_flags_parsing(self):
         self.assertEqual(module.access_mode("00"), "read")
         self.assertEqual(module.access_mode("01"), "write")
