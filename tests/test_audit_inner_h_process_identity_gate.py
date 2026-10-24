@@ -53,6 +53,19 @@ class IdentityGateTests(unittest.TestCase):
         self.assertEqual(a.WORDS[0x2c42c],0x52800040)
         self.assertEqual(a.WORDS[0x2c400],0x52800060)
 
+    def test_identity_object_init_pointer_and_bit_layout_pinned(self):
+        # Original x8 object 0x12a684 is published through RELATIVE GOT
+        # 0x123bd8 -> 0x128008; the low byte of the decoded config is true.
+        self.assertEqual(a.WORDS[0x15208], 0x39522b0a)
+        self.assertEqual(a.WORDS[0x15214], 0x3400028a)
+        self.assertEqual(a.WORDS[0x15250], 0xb800632d)
+        self.assertEqual(a.WORDS[0x152a4], 0xf9000128)
+        state=0x12a684
+        store_at=0x12a689+6
+        self.assertEqual(store_at,state+11)
+        self.assertEqual((0x01000101 >> 8) & 0xff,1)
+        self.assertEqual(store_at+1,0x12a690)
+
     def test_original_elf_hash_required_before_any_interpretation(self):
         with self.assertRaisesRegex(ValueError,"SHA-256"):
             a.audit(b"synthetic-no-original")
