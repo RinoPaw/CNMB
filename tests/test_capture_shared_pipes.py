@@ -131,6 +131,15 @@ class SharedPipesTests(unittest.TestCase):
         self.assertEqual(parents, {})
         self.assertIsNone(uid)
 
+    def test_shell_scanner_emits_one_newline_per_fd(self):
+        # The Python template itself is raw to avoid Windows SyntaxWarning,
+        # while printf still needs exactly ONE literal backslash before n.
+        command = module.READ_PIPES % {"pids": "8387 8714"}
+        self.assertIn("printf '%s %s %s %s\\n'", command)
+        self.assertNotIn("printf '%s %s %s %s\\\\n'", command)
+        self.assertIn("inode=${inode%]}", command)
+        self.assertNotIn("%%s", command)
+
     def test_proc_flags_parsing(self):
         self.assertEqual(module.access_mode("00"), "read")
         self.assertEqual(module.access_mode("01"), "write")
