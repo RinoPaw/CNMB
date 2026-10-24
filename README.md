@@ -204,6 +204,14 @@ python .\tools\audit_secneo_h_ipc.py .\path\to\original-base.apk
 python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 ~~~
 
+### SecNeo H 的本地 root 状态记录（2026-10-24）
+
+继续从已验证的 H TracerPid 正结果分支追踪，原版证实了本地持久化记录函数：0x2616c(1) 通过真实 AArch64 跳转表映射到键名 **root**，0x2682c 查询同一路径下的 **envc.push**，0x26bc0 在特定返回值条件允许时通过带独占锁的文件更新链回写该记录。两处原版状态上报路径分别是 0x5af68（格式参数标识 0xb6a281fb）和 0x5b40c（0xb6a281f1）。读端的原版字符串格式是 %s= 加一位状态数字、随后用 strtoul(...,16) 解析标识字段。
+
+完整原始 .text 中对键名选择 / 记录读取 / 更新函数的直接 BL 指令数分别是 **83 / 84 / 48**。这是可验证的静态调用点统计，并不代表真实写入次数。当前可以确定 TracerPid 阳性检查**可以触达 root 键的条件更新路径**，仍无法将 root 标签、文件内容或任一写入行为直接归因于 Java DEC 弹窗。用户设备已验证目标进程 FD 读取受限，后续继续依赖原版静态指令和高可信度日志。
+
+[专项证据、读端字段与调用点计数](docs/12.5.5-secneo-h-envc-push-root-record.md)；[只读静态审计](tools/audit_inner_h_envc_push.py)。
+
 ## 数据边界
 
 **请勿提交** APK、SO、DEX 转储、完整 logcat、Tombstone、`envc.push`、设备标识、令牌、账号信息或未经审查的诊断 ZIP。公开仓库只保留可公开的分析代码、去标识化结论及校验哈希。此仓库不分发原版商业客户端。
