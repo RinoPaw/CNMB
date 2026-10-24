@@ -209,6 +209,71 @@ class SharedPipesTests(unittest.TestCase):
             os.close(read_fd)
             os.close(write_fd)
 
+    def test_access_diagnosis_distinguishes_root_self_from_denied_target(self):
+        old_run = module.run_adb
+        calls = []
+        def stub(*args, **kwargs):
+            calls.append(args)
+            if args == ("shell", "su", "-c", "id -u"):
+                return "0\n"
+            if args == ("shell", "ps", "-A", "-o", "PID,PPID,UID,NAME"):
+                return (
+                    "PID PPID UID NAME\n"
+                    "8387 862 10250 " + module.PACKAGE + "\n"
+                    "8714 1 10250 zygote\n")
+            if args[:3] == ("shell", "su", "-c"):
+                self.assertIn("for pid in $ 8387;", args[3])
+                return (
+                    "STAT 4200 1 1 1 8 8 8 2\n"
+                    "STAT 8387 1 0 0 0 0 0 0\n")
+            raise AssertionError(args)
+        try:
+            module.run_adb = stub
+            result = module.diagnose_fd_access(module.PACKAGE)
+        finally:
+            module.run_adb = old_run
+        self.assertEqual(result["status"], "target_fd_denied_or_hidden")
+        self.assertTrue(result["root_uid_confirmed"])
+        self.assertEqual(result["root_shell"]["fd_readlinks_succeeded"], 8)
+        self.assertEqual(result["target_process"]["fd_readlinks_succeeded"], 0)
+        self.assertNotIn("zygote", str(result))
+        self.assertNotIn("8387", str(result))
+        self.assertFalse(any("force-stop" in call or "monkey" in call
+                             for call in calls))
+
+    def test_access_diagnosis_target_available(self):
+        original = module.run_adb
+        def stub(*args, **kwargs):
+            if args[-1] == "id -u":
+                return "0\n"
+            if args[:2] == ("shell", "ps"):
+                return "8387 862 10250 " + module.PACKAGE + "\n"
+            return ("STAT 4200 1 1 1 8 8 8 1\n"
+                    "STAT 8387 1 1 1 120 120 120 6\n")
+        try:
+            module.run_adb = stub
+            result = module.diagnose_fd_access(module.PACKAGE)
+        finally:
+            module.run_adb = original
+        self.assertEqual(result["status"], "target_fd_readlink_accessible")
+
+    def test_access_diagnosis_handles_missing_package_without_relaunch(self):
+        original = module.run_adb
+        def stub(*args, **kwargs):
+            if args[-1] == "id -u":
+                return "0\n"
+            if args[:2] == ("shell", "ps"):
+                return "992 1 1000 system_server\n"
+            self.assertIn("for pid in $;", args[-1])
+            return "STAT 4200 1 1 1 6 6 6 2\n"
+        try:
+            module.run_adb = stub
+            result = module.diagnose_fd_access(module.PACKAGE)
+        finally:
+            module.run_adb = original
+        self.assertEqual(result["status"], "target_not_running")
+        self.assertFalse(result["target_package_pid_seen"])
+
     def test_proc_flags_parsing(self):
         self.assertEqual(module.access_mode("00"), "read")
         self.assertEqual(module.access_mode("01"), "write")
