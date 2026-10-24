@@ -63,6 +63,14 @@ PINNED = {
     0x26894: 0x91040908,  # ASCII+0xe
     0x26930: 0x97ffa3cc,  # fopen@plt
     0x269b0: 0x97ffa208,  # fgets@plt
+    0x26968: 0x9103e508,  # source for %s= prefix
+    0x2699c: 0x97fff992,  # checked formatter for prefix
+    0x26b4c: 0x52800202,  # strtoul base 16
+    0x26b50: 0x5100c116,  # returned leading status digit -= '0'
+    0x26b54: 0x97ffa0af,  # strtoul@plt
+    0x26b60: 0x35000048,  # reject trailing unparsable bytes
+    0x26b64: 0xb9000320,  # save parsed 32-bit hex payload through x25
+    0x26b90: 0x2a1603e0,  # return status w22
     0x26c30: 0xd00007f6,  # writer ASCII origin
     0x26c34: 0x9103e6d6,  # ASCII+5
     0x26cc8: 0x97fff8c7,  # __snprintf_chk / formatter
@@ -88,6 +96,7 @@ WRITER_FILE_SITES = (0x26c5c, 0x26c70, 0x26c84, 0x26c90,
                      0x26c98, 0x26ca0, 0x26ca8, 0x26cb0, 0x26cb8)
 WRITER_FORMAT_SITES = (0x26ccc, 0x26ce0, 0x26cf4, 0x26d00,
                        0x26d08, 0x26d10, 0x26d18)
+READER_FORMAT_SITES = (0x2696c, 0x26980, 0x26990)
 
 
 def insn(elf, va):
@@ -199,6 +208,7 @@ def audit(elf):
         (0x5af34, 0x2616c), (0x5af44, 0x2682c), (0x5af68, 0x26bc0),
         (0x5b3dc, 0x2616c), (0x5b3f0, 0x2682c), (0x5b40c, 0x26bc0),
         (0x26748, 0xf800), (0x26930, 0xf860), (0x269b0, 0xf1d0),
+        (0x2699c, 0x24fe4), (0x26b54, 0xee10),
         (0x26d24, 0x12f00), (0x26d30, 0xf0c0), (0x26d44, 0xf860),
         (0x26d5c, 0xf860), (0x26d70, 0xf420),
         (0x26e04, 0xf1d0), (0x27130, 0xf3f0),
@@ -216,6 +226,8 @@ def audit(elf):
                                    5, 22, "envc.push")
     writer_format = decode_loads(elf, chars, WRITER_FORMAT_SITES,
                                  5, 22, "%s=%x%x")
+    reader_prefix_format = decode_loads(elf, chars, READER_FORMAT_SITES,
+                                        5, 8, "%s=")
     for va, expected in (
         (0xf0801, "%s%s"), (0xf0806, "w+"),
         (0xf0809, "%s%x%s"), (0xf0717, "r"), (0x101414, "r+"),
@@ -268,6 +280,14 @@ def audit(elf):
             "create_if_absent_mode": "w+",
             "update_file_lock": "flock(...,LOCK_EX)",
             "writer_record_format": writer_format,
+            "reader_record_prefix_format": reader_prefix_format,
+            "reader_status_encoding": (
+                "0x26b44 first character after prefix; 0x26b50 subtract ASCII '0'"
+                " and 0x26b90 returns resulting status"),
+            "reader_marker_parsing": (
+                "0x26b4c sets base=16; 0x26b54 strtoul on remaining bytes,"
+                " 0x26b60 checks end pointer, 0x26b64 may store parsed value"),
+            "pre_transform_formatted_record_for_this_call": "root=1b6a281fb",
             "reader_calls": ["fopen", "fgets", "strtoul"],
             "writer_calls": [
                 "access", "fopen", "flock", "fgets", "fseek",
