@@ -74,6 +74,8 @@ STRINGS = (
                           0x2d094),0x21,8),
 )
 DEX_WORDS = {
+    0x3e18:0x1071, 0x3e1a:0x0083, # AW.onCreate -> H.callSW
+    0x3e26:0x1071, 0x3e28:0x0082, # AW.onCreate -> H.callBS
     0x42ec:0x001a, 0x42ee:0x000e, # const-string "255"
     0x42f0:0x0069, 0x42f2:0x000b, # sput-object H.PC_FLAG
     0x4bda:0x0062, 0x4bdc:0x000b, # sget H.PC_FLAG
@@ -103,6 +105,21 @@ def decoded_indexed_string(elf, ascii_table, sites, base, register):
             raise ValueError("original printable table index out of bounds")
         chars.append(ascii_table[index])
     return bytes(chars).decode("ascii")
+
+
+def native_registration_name(elf, printable, sites):
+    # Four original JNINativeMethod names are constructed through LDRB
+    # from the original readable ASCII table+8, two characters each.
+    characters=[]
+    for pc in sites:
+        insn=elf_word(elf,pc)
+        if ((insn & 0xffc003ff) != 0x39400388):
+            raise ValueError("original JNI method-name LDRB changed at "+hex(pc))
+        index=8+((insn>>10)&0xfff)
+        if index>=len(printable):
+            raise ValueError("original JNI method-name index outside table")
+        characters.append(printable[index])
+    return bytes(characters).decode("ascii")
 
 
 def bittest(insn,pc):
@@ -216,6 +233,12 @@ def audit(elf,dex,manifest):
     for expected,sites,base,reg in STRINGS:
         actual=decoded_indexed_string(elf,ascii_table,sites,base,reg)
         if actual!=expected:raise ValueError("original decoded JNI literal changed")
+    for expected,sites in (("sw",(0x152d8,0x152ec)),
+                           ("bs",(0x153fc,0x1540c)),
+                           ("is",(0x15474,0x15488)),
+                           ("us",(0x154d8,0x154e4))):
+        if native_registration_name(elf,ascii_table,sites)!=expected:
+            raise ValueError("original JNI registered method name changed")
     if (bittest(elf_word(elf,0x2c46c),0x2c46c)!=(3,0,0x2c8ac)
             or bittest(elf_word(elf,0x2c90c),0x2c90c)!=(3,1,0x2c930)):
         raise ValueError("original native PC_FLAG guard changed")
@@ -227,9 +250,11 @@ def audit(elf,dex,manifest):
     # instance just from an unexecuted construction instruction.
     messenger=pin_source(dex)
     services=manifest_service_names(manifest)
-    absent=[name for name in services if name.rsplit(".",1)[-1]=="IsoService"]
-    if absent:
-        raise ValueError("original Manifest now declares IsoService")
+    if len(services)!=78:
+        raise ValueError("original base Manifest service declaration count changed")
+    iso=[name for name in services if name.endswith("IsoService")]
+    if iso:
+        raise ValueError("original base Manifest now declares IsoService")
     return {
         "original_inner_elf_sha256":INNER_SHA,
         "original_classes_dex_sha256":DEX_SHA,
