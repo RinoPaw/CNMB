@@ -14,11 +14,22 @@ from pathlib import Path
 
 from audit_nested_elf import APK_SHA, SAMPLES, recover, bl_target
 from audit_inner_app_process_argv import decode_table, elf_file_offset
+from audit_inner_spawn_config import audit as original_spawn_config_audit
+from audit_inner_h_guard_config import adrp_page, relocation_target
 
 SHA = SAMPLES["libDexHelper.so"]["inner_sha"]
 # Each word is exact original ARM64 code from the SHA-pinned inner ELF.
 WORDS = {
     0x2bf88:0xb00007c9, 0x2bf8c:0x91040d29,
+    0x151dc:0xb00008a8, 0x151e4:0x911a1108, # x8 = 0x12a684
+    0x151ec:0xa900fd1f, 0x151f0:0xf900011f, # clear state object
+    0x15204:0xb00008b8, 0x15208:0x39522b0a, # read embedded config +0x4a
+    0x1520c:0xb00008b9, 0x15210:0x911a2739, # x25 = 0x12a689
+    0x15214:0x3400028a, # if config byte zero skip writes
+    0x15240:0x5280202d, 0x15244:0x72a0200d, # w13=0x01000101
+    0x15250:0xb800632d, # unaligned write at x25+6 => object+11
+    0x15298:0xd0000869, 0x152a0:0xf945ed29,
+    0x152a4:0xf9000128, # store original x8 in pointer slot at 0x128008
     0x2c01c:0xd2801588, 0x2c020:0xd4000001, # SYS_getpid = 172
     0x2c194:0xd2800708, 0x2c198:0xd4000001, # SYS_openat = 56
     0x2c1dc:0xd28007e8, 0x2c1e0:0xd4000001, # SYS_read = 63
@@ -86,6 +97,18 @@ def audit(elf):
     for pc, expected in WORDS.items():
         if word(elf, pc) != expected:
             raise ValueError("original ARM64 machine word changed at " + hex(pc))
+    conf = original_spawn_config_audit(elf)
+    if conf["target_field"]["on_disk_value"] is not True:
+        raise ValueError("original embedded +0x4a configuration is no longer true")
+    if (relocation_target(elf, 0x123bd8) != 0x128008
+            or adrp_page(word(elf, 0x151dc), 0x151dc) != 0x12a000
+            or adrp_page(word(elf, 0x15204), 0x15204) != 0x12a000
+            or adrp_page(word(elf, 0x1520c), 0x1520c) != 0x12a000
+            or adrp_page(word(elf, 0x15298), 0x15298) != 0x123000):
+        raise ValueError("original runtime identity object assignment changed")
+    if (0x12a689+6 != 0x12a684+11
+            or (0x01000101 >> 8) & 255 != 1):
+        raise ValueError("original init byte arithmetic is inconsistent")
     chars = decode_table(elf)
     prefix = text_from_original_ldr(elf, chars, PREFIX_SITES)
     suffix = text_from_original_ldr(elf, chars, SUFFIX_SITES)
@@ -130,8 +153,25 @@ def audit(elf):
             "runtime_byte_offset": "0xc",
             "runtime_byte_zero": "return NULL at 0x2c930",
         },
+        "runtime_identity_state_init": {
+            "configuration_source": "original MessagePack config +0x4a true",
+            "initialization_branch": "0x15208..0x15214",
+            "object_va": "0x12a684",
+            "pointer_slot": "0x128008",
+            "global_relocation": "0x123bd8 -> 0x128008",
+            "publish": "0x15298..0x152a4",
+            "byte_offset": "0xc",
+            "byte_va": "0x12a690",
+            "initial_byte": 1,
+            "how_written": "0x15240..0x15250 MOV/MOVK+unaligned STR at object+11",
+            "runtime_mutation_unverified": True,
+        },
         "default_java_flag": 255,
         "under_original_H_PC_FLAG_initial_value": "both sw and bs short-circuit before procfs identity helper",
+        "under_initial_config_if_PC_FLAG_bit_cleared": (
+            "runtime identity byte +0xc starts as 1, then helper return 0 "
+            "is required; later config mutation is not excluded"),
+
         "limits": (
             "No proof of runtime PC_FLAG modification, a successful service "
             "bind, or remote Messenger reply. No DEC or crash attribution."
