@@ -58,6 +58,41 @@ class HEnvcPushTests(unittest.TestCase):
         self.assertEqual(len(subject.ROOT_SITES),4)
         self.assertEqual(len(subject.WRITER_FILE_SITES),9)
 
+    def test_census_scans_exact_text_section_and_all_three_helpers(self):
+        import struct
+        text_start, text_size = 0xfa00, 0xe0358
+        elf = bytearray(text_start + text_size)
+        # Synthetic ELF section metadata only; no proprietary source bytes.
+        struct.pack_into("<Q", elf, 40, 0x200)
+        struct.pack_into("<HHH", elf, 58, 64, 3, 1)
+        names = b"\0.shstrtab\0.text\0"
+        elf[0x400:0x400+len(names)] = names
+        struct.pack_into("<IIQQQQIIQQ", elf, 0x200+64,
+                         1, 3, 0, 0, 0x400, len(names), 0, 0, 1, 0)
+        struct.pack_into("<IIQQQQIIQQ", elf, 0x200+128,
+                         11, 1, 0x6, text_start, text_start,
+                         text_size, 0, 0, 4, 0)
+        expected = {
+            0x2616c: (83, (0x5af34, 0x5b3dc)),
+            0x2682c: (84, (0x5af44, 0x5b3f0)),
+            0x26bc0: (48, (0x5af68, 0x5b40c)),
+        }
+        nxt = 0x90000
+        for target,(total,pinned) in expected.items():
+            sites = list(pinned)
+            while len(sites) < total:
+                sites.append(nxt)
+                nxt += 4
+            for pc in sites:
+                imm26 = ((target-pc)//4) & 0x3ffffff
+                struct.pack_into("<I", elf, pc, 0x94000000 | imm26)
+        result = subject.native_callsite_census(elf)
+        self.assertEqual(result,
+                         {"0x2616c": 83, "0x2682c": 84, "0x26bc0": 48})
+        struct.pack_into("<I", elf, nxt-4, 0)
+        with self.assertRaisesRegex(ValueError,"callsite census"):
+            subject.native_callsite_census(elf)
+
     def test_audit_fails_closed_on_nonoriginal_elf(self):
         with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
             subject.audit(b"synthetic wrong ELF")
