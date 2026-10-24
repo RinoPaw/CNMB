@@ -80,10 +80,10 @@ def audit(elf):
       "inner_elf_sha256":SAMPLES["libDexHelper.so"]["inner_sha"],
       "positive_result_follow_up":{
           "enter":"0x5af18",
-          "path_builder":"0x2616c",
+          "record_key_builder":"0x2616c (selector 1 -> root)",
           "file_read_or_match_check":"0x2682c",
           "file_update_helper":"0x26bc0",
-          "helper_arg_0":"path built on stack by 0x2616c, exact bytes not assigned a name",
+          "helper_arg_0":"root record key built on stack by 0x2616c; file envc.push assembled separately inside helper",
           "helper_arg_1":"1 (w1 at 0x5af64)",
           "helper_arg_2":"computed value from 0x5af50..0x5af5c"
       },
@@ -101,7 +101,7 @@ def audit(elf):
           },
           "encoding_or_transform_helpers":["0x273d8","0x27524","0x27ee0","0x27d50"]
       },
-      "limits":"Verified original potential file modification path. Exact file identity, bytes changed, runtime execution and DEC relationship remain unproven."
+      "limits":"Verified original conditional envc.push file update path for key root. Runtime directory prefix, actual bytes written, device execution and DEC relationship remain unproven."
     }
 
 
