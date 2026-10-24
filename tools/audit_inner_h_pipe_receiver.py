@@ -87,6 +87,9 @@ def stack_literal(elf, ascii_table, begin, end, destination, length):
                 if offset in saved and saved[offset] != ascii_table[index]:
                     raise ValueError("inconsistent original JNI stack literal")
                 saved[offset] = ascii_table[index]
+            # A load is consumed by its immediate store. Do not let a later
+            # orphan STRB silently reuse a prior character register source.
+            pending = None
     if len(saved) != length:
         raise ValueError("JNI literal does not have enough verified byte stores")
     return bytes(saved[destination + i] for i in range(length)).decode("ascii")
