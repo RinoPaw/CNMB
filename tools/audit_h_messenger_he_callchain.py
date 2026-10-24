@@ -24,8 +24,10 @@ SENDER=(SERVICE,"onServiceConnected",
         "(Landroid/content/ComponentName;Landroid/os/IBinder;)V")
 RECEIVER=(HANDLER,"handleMessage","(Landroid/os/Message;)V")
 DELEGATE=(H,"c","(I)V")
+INITIALIZER=(H,"<clinit>","()V")
 NATIVE=(H,"he","(I)V")
-CODE_OFFSETS={SENDER:0x518c, RECEIVER:0x41fc, DELEGATE:0x4af0}
+CODE_OFFSETS={SENDER:0x518c, RECEIVER:0x41fc, DELEGATE:0x4af0,
+              INITIALIZER:0x427c}
 METHOD_REFS={
   52:("Landroid/os/Message;","obtain",
       "(Landroid/os/Handler;I)Landroid/os/Message;"),
@@ -35,6 +37,7 @@ METHOD_REFS={
   117:(H,"b","()Landroid/os/Messenger;"),
   128:DELEGATE,
   141:NATIVE,
+  154:(SERVICE,"<init>","()V"),
 }
 FIELD_REFS={
   3:("Landroid/os/Message;","arg1","I"),
@@ -43,6 +46,8 @@ FIELD_REFS={
   6:("Landroid/os/Message;","what","I"),
 }
 WORDS={
+  0x42fe:0x0022, 0x4300:0x0032, # H.<clinit> creates b ServiceConnection
+  0x4302:0x1070, 0x4304:0x009a, # invoke-direct b.<init>
   0x4226:0x7052, 0x4228:0x0006, # receiver reads Message.what
   0x422a:0x0113, 0x422c:0x03e8, # compare against 1000
   0x422e:0x1032, 0x4230:0x0006, # if-eq -> handle branch
@@ -158,6 +163,9 @@ def pin_source(dex):
     return {
         "classes_dex_sha256":DEX_SHA,
         "validated_code_items":len(codes),
+        "service_connection_created":(
+            "H.<clinit> at 0x42fe/0x4302 constructs SecNeo b ServiceConnection; "
+            "remote Service identity/bind implementation not established"),
         "sender":{
             "method":SERVICE+"->onServiceConnected",
             "code_item":hex(CODE_OFFSETS[SENDER]),
