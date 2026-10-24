@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Sample shared anonymous pipe FDs among exact-named target processes.
+"""Sample shared anonymous pipe FDs across processes with the target app UID.
 
 ADB + root only; no Frida, hooks, file contents, packet capture or app changes
 unless --launch is explicitly provided. Only pipes observed in TWO OR MORE
-target-named PIDs are reported. Pipe inode numbers never enter JSON output.
+same-UID PIDs are reported. Pipe inode numbers never enter JSON output.
 The kernel may reparent processes, reuse pipe inode numbers or close a pipe
 between samples. A match is FD sharing, not proof of who created the pipe or
 what payload it carried.
@@ -16,15 +16,16 @@ import subprocess
 import time
 
 from capture_loaded_modules import (
-    PACKAGE, SAFE_PACKAGE, process_parentage, require_ready_device, run_adb
+    PACKAGE, SAFE_PACKAGE, require_ready_device, run_adb
 )
 
 PIPE_ROW = re.compile(r"^(?P<pid>\d+)\s+(?P<fd>\d+)\s+(?P<inode>\d+)\s+(?P<flags>[0-7]+|-)$")
 MAX_PID_COUNT = 20
+PS_UID_ROW = re.compile(r"^\s*(?P<pid>\d+)\s+(?P<ppid>\d+)\s+(?P<uid>\d+)\s+(?P<name>\S+)\s*$")
 
 # PIDs are coerced to positive integers and cannot inject shell syntax.
 # Only 'pipe:[inode]' links are printed. No sockets, names, paths or content.
-READ_PIPES = """
+READ_PIPES = r"""
 for pid in %(pids)s; do
   for path in /proc/$pid/fd/*; do
     target=$(readlink "$path" 2>/dev/null) || continue
@@ -41,6 +42,41 @@ for pid in %(pids)s; do
   done
 done
 """
+
+
+
+def select_app_uid_processes(ps_output, package, known_uid=None):
+    """Select all numeric-UID peers of a confirmed target-named process.
+
+    The initial UID MUST come from an exact package process name. A UID
+    already seen in this run may be reused during a gap in that name's
+    lifetime. NAME is never retained or emitted for unrelated processes.
+    """
+    rows = []
+    for line in ps_output.splitlines():
+        matched = PS_UID_ROW.fullmatch(line.strip())
+        if not matched:
+            continue
+        pid = int(matched.group("pid"))
+        ppid = int(matched.group("ppid"))
+        uid = int(matched.group("uid"))
+        if pid <= 0 or uid <= 0:
+            continue
+        rows.append((pid, ppid, uid, matched.group("name")))
+    if not rows:
+        raise ValueError("ps did not return numeric UID rows")
+    present_app_uids = {uid for pid, ppid, uid, name in rows if name == package}
+    if len(present_app_uids) > 1 or (present_app_uids and known_uid is not None
+                                     and present_app_uids != {known_uid}):
+        raise ValueError("ambiguous or changing app UID")
+    uid = next(iter(present_app_uids), known_uid)
+    if uid is None:
+        return {}, {}, None
+    parents = {pid: ppid for pid, ppid, row_uid, name in rows if row_uid == uid}
+    identities = {pid: ("target_package" if name == package
+                         else "same_uid_other_name")
+                  for pid, ppid, row_uid, name in rows if row_uid == uid}
+    return parents, identities, uid
 
 
 def access_mode(flags):
@@ -72,7 +108,7 @@ def parse_fd_rows(raw, allowed_pids):
             if len({member["pid"] for member in members}) >= 2}
 
 
-def shared_links(raw, parents, tags):
+def shared_links(raw, parents, tags, identities=None):
     """Anonymize inode numbers with local capture-scoped sequential labels."""
     pipes = parse_fd_rows(raw, set(parents))
     links = []
@@ -80,7 +116,9 @@ def shared_links(raw, parents, tags):
         if inode not in tags:
             tags[inode] = f"pipe_{len(tags) + 1}"
         participants = [
-            {**m, "ppid_at_sample": parents[m["pid"]]} for m in members
+            {**m, "ppid_at_sample": parents[m["pid"]],
+             **({"name_class": identities.get(m["pid"], "unclassified")}
+                if identities is not None else {})} for m in members
         ]
         links.append({"pipe": tags[inode], "members": participants,
                       "opposite_access_modes_observed":
@@ -109,29 +147,56 @@ def observe(package, seconds, interval, launch=False):
 
     started = time.monotonic()
     tags = {}
+    known_uid = None
     previously = None
     events = []
     errors = []
     polls = 0
+    stats = {
+        "polls_with_confirmed_uid": 0,
+        "polls_with_same_uid_other_name": 0,
+        "polls_with_two_or_more_candidates": 0,
+        "fd_queries": 0,
+        "fd_queries_with_pipe_rows": 0,
+        "total_pipe_fd_rows": 0,
+        "max_candidate_pids": 0,
+        "max_pipe_fd_rows_in_one_poll": 0
+    }
     while (now := time.monotonic() - started) < seconds:
         polls += 1
         try:
-            ps = run_adb("shell", "ps", "-A", "-o", "PID,PPID,NAME", timeout=5)
-            parents = process_parentage(ps, package)
-            if len(parents) > MAX_PID_COUNT:
-                errors.append({"t": round(now, 3), "kind": "too_many_target_pids"})
-            elif len(parents) >= 2:
+            # Android toybox ps supports numeric UID as a documented field.
+            ps = run_adb("shell", "ps", "-A", "-o", "PID,PPID,UID,NAME", timeout=5)
+            parents, identities, known_uid = select_app_uid_processes(
+                ps, package, known_uid)
+            count = len(parents)
+            if known_uid is not None:
+                stats["polls_with_confirmed_uid"] += 1
+            if any(value == "same_uid_other_name" for value in identities.values()):
+                stats["polls_with_same_uid_other_name"] += 1
+            stats["max_candidate_pids"] = max(stats["max_candidate_pids"], count)
+            if count > MAX_PID_COUNT:
+                errors.append({"t": round(now, 3), "kind": "too_many_same_uid_pids"})
+                continue
+            if count >= 2:
+                stats["polls_with_two_or_more_candidates"] += 1
                 raw = read_pipe_fds(parents.keys())
-                links = shared_links(raw, parents, tags)
-                if links != previously:
-                    events.append({"t": round(time.monotonic() - started, 3),
-                                   "shared_links": links})
-                    previously = links
+                stats["fd_queries"] += 1
+                row_count = sum(1 for line in raw.splitlines()
+                                if PIPE_ROW.fullmatch(line.strip()))
+                stats["total_pipe_fd_rows"] += row_count
+                stats["max_pipe_fd_rows_in_one_poll"] = max(
+                    stats["max_pipe_fd_rows_in_one_poll"], row_count)
+                if row_count:
+                    stats["fd_queries_with_pipe_rows"] += 1
+                links = shared_links(raw, parents, tags, identities)
             else:
-                if previously:
-                    events.append({"t": round(time.monotonic() - started, 3),
-                                   "shared_links": []})
-                previously = []
+                links = []
+            if links != previously:
+                events.append({"t": round(time.monotonic() - started, 3),
+                               "candidate_process_count": count,
+                               "shared_links": links})
+                previously = links
         except (RuntimeError, subprocess.TimeoutExpired, ValueError):
             errors.append({"t": round(time.monotonic() - started, 3),
                            "kind": "process_or_fd_unavailable"})
@@ -140,9 +205,12 @@ def observe(package, seconds, interval, launch=False):
         "package": package,
         "seconds": seconds, "poll_interval_seconds": interval,
         "launched_by_script": launch, "polls": polls,
+        "statistics": stats,
         "events": events, "errors": errors,
         "notes": [
-            "Capture only includes shared pipe FDs across distinct matching PIDs.",
+            "Capture selects exact package PIDs plus any peers sharing their confirmed numeric UID.",
+            "An equal UID is an identity candidate, not proof a process belongs to SecNeo.",
+            "The statistics count scans even when shared_links did not change.",
             "Pipe names are per-capture labels. Raw inode values and path strings are not exported.",
             "Matching inode is not evidence of original parent, contents or DEC causality.",
             "No match can mean transient close, missed window, unavailable permissions or alternate IPC.",
