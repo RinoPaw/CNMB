@@ -19,7 +19,7 @@ class IdentityGateTests(unittest.TestCase):
         all_sites=a.PREFIX_SITES+a.SUFFIX_SITES
         text=b"/proc//cmdline"
         self.assertEqual(len(text),len(all_sites))
-        words={site:0x39400128|((ord(char)-32-0x0f)<<10)
+        words={site:0x39400128|((char-32-0x0f)<<10)
                for site,char in zip(all_sites,text)}
         with patch.object(a,"word",side_effect=lambda elf,pc:words[pc]):
             self.assertEqual(a.text_from_original_ldr(
