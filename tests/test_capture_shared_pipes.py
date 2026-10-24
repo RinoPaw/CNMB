@@ -294,17 +294,17 @@ class SharedPipesTests(unittest.TestCase):
         def stub(*args, **kwargs):
             calls.append(args)
             if args == ("shell", "su", "-c", "id -u"):
-                return "0\\n"
+                return "0\n"
             if args[:3] == ("shell", "am", "force-stop"):
                 return ""
             if args[:3] == ("shell", "monkey", "-p"):
                 return ""
             if args[:2] == ("shell", "ps"):
-                return "8387 862 10250 " + module.PACKAGE + "\\n"
+                return "8387 862 10250 " + module.PACKAGE + "\n"
             if args[:3] == ("shell", "su", "-c"):
                 self.assertIn("for pid in SELF 8387;", args[3])
-                return ("STAT SELF 1 1 1 10 10 10 2\\n"
-                        "STAT 8387 1 0 0 0 0 0 0\\n")
+                return ("STAT SELF 1 1 1 10 10 10 2\n"
+                        "STAT 8387 1 0 0 0 0 0 0\n")
             raise AssertionError(args)
         try:
             module.run_adb = stub
