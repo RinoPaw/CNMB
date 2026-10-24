@@ -14,7 +14,7 @@
 - 在 OPPO CPH2127 / Android 12 上，干净重启后的 DEC 弹窗与 Frida 服务端运行时的原生崩溃属于两类不同的观测结果。崩溃的具体触发代码尚未定位。
 - 两轮独立实测都观察到额外 `app_process / RuntimeInit` 在主进程启动约 **4.75 秒**后初始化；第二轮通过 PPID 证实主进程至少有两个直接子进程，另有一进程在首次采样时 PPID 已为 1。两轮随后均显示 DEC 警告并结束主进程，**时间相关性尚不足以证明检测调用**。
 - 原版 ELF 的 `libDexHelper.so` `DT_INIT_ARRAY` 经重定位指向 `0x4780` 构造函数；它与 `libdexjni.so` 的可执行段末尾共享 9,030 字节（两库偏移差 `0x2000`）。该构造函数含回溯查找 ELF 头的真实指令；尚未证明它执行 DEC 检测。
-- **原版受保护内层 ELF 已成功离线复原。** 内层 `libDexHelper.so` 导入 `fork/execl`，已确认 `JNI_OnLoad:0x16990` 调用注册函数 `0x1DF7C`，把 `0x4E1C8` 写入回调表；该回调函数具备 `pthread_create(…,0x59700,…)` 调用，线程入口内执行双重 `fork` 和 `execl("/system/bin/app_process",…)`。已恢复 `--nice-name=zygote`、`--write-fd`、`--flags 0` 等实际参数；Java 主类值仍未知。现已恢复回调表的分发线程及条件：初始化配置字段 `+0x4A` 非零时设置位 `0x04`，分发线程调用回调表 `+0x20` 槽，静态路径闭合至双重 `fork`；实际配置值与设备 PID 对应仍需验证。
+- **原版受保护内层 ELF 已成功离线复原。** 内层 `libDexHelper.so` 导入 `fork/execl`，已确认 `JNI_OnLoad:0x16990` 调用注册函数 `0x1DF7C`，把 `0x4E1C8` 写入回调表；该回调函数具备 `pthread_create(…,0x59700,…)` 调用，线程入口内执行双重 `fork` 和 `execl("/system/bin/app_process",…)`。已恢复 `--nice-name=zygote`、`--write-fd`、`--flags 0` 等实际参数；Java 主类已在后续原版数据流中确认默认值为 `com.secneo.apkwrapper.H`，可被运行时配置覆盖。现已恢复回调表的分发线程及条件：初始化配置字段 `+0x4A` 非零时设置位 `0x04`，分发线程调用回调表 `+0x20` 槽，静态路径闭合至双重 `fork`；实际配置值与设备 PID 对应仍需验证。
 - **辅助 `app_process` 默认 Java 主类已恢复**：原版内层 ELF 的逐字节构造及堆对象字段数据流证明，默认入口为 `com.secneo.apkwrapper.H`；同一对象 `+0xE0` 字符串被作为 `execl` 的 `x4` 参数。运行时 `config+0x200/+0x208` 允许覆盖，此前两轮设备日志未打印入口类；新核验的一轮重启日志已明确打印实际 Java 入口 `com/secneo/apkwrapper/H`，但它与原版 `fork/execl` 静态路径的 PID 级对应仍待证明。验证工具：[原版入口与参数审计](tools/audit_inner_java_entry.py)。
 - **原版内置配置值已验证**：`JNI_OnLoad` 使用 XOR `0xAC` 解码 MessagePack 配置，其第 15 项（流偏移 `+63`）为 `true`，经 `0x14C2C` 写入静态配置 `+0x4A`。后续初始化器的 `+0x4A` 字段来源于另一运行时指针，复制或修改关系仍待核实，不能直接推定实际运行中的标志值。工具：[MessagePack 配置审计](tools/audit_inner_spawn_config.py)。
 - 已通过原版 PLT/JUMP_SLOT 精确证明构造函数使用 `dlopen("libc.so",2)` 和 `dlsym("sscanf")`，随后进入 `0x33f8`，通过 `fopen/fgets/sscanf` 解析 `/proc/self/maps`，再执行原生内存映射/权限配置流程。此链属于原版装载行为；尚未定位 DEC 检测条件。
@@ -174,6 +174,21 @@ python .\experiments\correlate_reboot_h_entry.py "$HOME\Downloads\CNMB-after-reb
 ~~~
 
 工具拒绝跨天拼接和多会话歧义，输出仅含允许的 PID、UID、时间与证据边界。原始日志保留在本地。 **`CNMB-after-reboot.txt` 是私有设备日志，不包含在 GitHub 仓库中。使用前须从之前保存的原始采集文件恢复；若路径不存在，工具会给出明确的缺失文件提示。**详情：[H 入口与路由核验](docs/2026-10-22-runtime-h-entry-confirmation.md)。
+
+### 原版 SecNeo H 检查结果的双向管道链路（2026-10-24）
+
+原版 `classes.dex` 与恢复的内层 ELF 已分别独立验哈希，并恢复出一条**静态闭合**的 SecNeo 辅助进程检查通信链：
+
+- 原生工作线程构造匿名管道，通过 `--write-fd <FD> --flags 0` 把写端传给默认 `com.secneo.apkwrapper.H`；
+- `H.main` 使用 `ParcelFileDescriptor.adoptFd`，经 `H.b(0)` → `H.a(0)` 读取 `/proc/self/status` 的 `TracerPid`，用 `DataOutputStream.writeUTF` 回传结果整数的十进制文本；
+- 父端把同一管道读端通过 JNI `ParcelFileDescriptor.adoptFd` → `AutoCloseInputStream` → `DataInputStream.readUTF` 读取，随后 `GetStringUTFChars` → `atoi` 并以 `>=1` 为条件分支。
+
+这是原版检查结果 IPC 的代码级证据，尚未证明它就是 `DeviceEnvironmentCheck.startCheck()` 或 `DECMsgDialog` 的触发路径。设备 FD 动态采样已证实受访问限制：Root Shell 可读自身 FD，无法读取目标 App FD；后续不再要求重复同样的失败采集。完整地址和原始指令见[SecNeo H 管道链分析](docs/12.5.5-secneo-h-pipe-result-chain.md)。
+
+~~~powershell
+python .\tools\audit_secneo_h_ipc.py .\path\to\original-base.apk
+python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
+~~~
 
 ## 数据边界
 
