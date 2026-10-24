@@ -35,6 +35,16 @@ PINNED = {
     0x5af60: 0x910343e0,  # x0 -> caller key buffer
     0x5af64: 0x52800021,  # mov w1,#1
     0x5af68: 0x97ff2f16,  # call 0x26bc0
+    0x5b344: 0x370003e8,  # guard bit0 set -> 0x5b3c0
+    0x5b3c8: 0x52800020,  # second root-key selector 1
+    0x5b3dc: 0x97ff2b64,  # call 0x2616c
+    0x5b3f0: 0x97ff2e0f,  # call 0x2682c
+    0x5b3f4: 0x72001c1f,  # tst w0,#255
+    0x5b3f8: 0x540000c1,  # b.ne skip second update
+    0x5b3fc: 0x52903e22,  # mov w2,#0x81f1
+    0x5b404: 0x52800021,  # mov w1,#1
+    0x5b408: 0x72b6d442,  # movk w2,#0xb6a2,lsl16
+    0x5b40c: 0x97ff2ae8,  # call 0x26bc0
     0x26188: 0xd00007e8,  # adrp x8,0x124000
     0x2618c: 0x9104d508,  # add x8,x8,#0x135 (ASCII+0x41)
     0x265cc: 0x51000408,  # selector-index = w0-1
@@ -122,6 +132,63 @@ def branch_target_for_lookup_one(elf):
     return target
 
 
+def native_callsite_census(elf):
+    """Scan entire ELF .text for aligned direct AArch64 BL instructions.
+
+    Counts are static BL targets in the pinned original section. Control-flow
+    reachability and actual execution are explicitly out of scope.
+    """
+    hdr = struct.unpack_from("<16sHHIQQQIHHHHHH", elf)
+    shoff, stride, count = hdr[6], hdr[11], hdr[12]
+    shstr = hdr[13]
+    if stride != 64 or not 0 <= shstr < count or shoff + count*stride > len(elf):
+        raise ValueError("invalid ELF section header metadata")
+    def sh(i):
+        return struct.unpack_from("<IIQQQQIIQQ", elf, shoff+i*stride)
+    names = sh(shstr)
+    name_data = elf[names[4]:names[4]+names[5]]
+    matching = []
+    for i in range(count):
+        section = sh(i)
+        name_offset = section[0]
+        if name_offset >= len(name_data):
+            raise ValueError("invalid original section name offset")
+        tail = name_data[name_offset:].split(b"\0", 1)[0]
+        if tail == b".text":
+            matching.append(section)
+    if len(matching) != 1:
+        raise ValueError("original executable .text section missing")
+    section = matching[0]
+    start, filepos, size = section[3], section[4], section[5]
+    if ((start, filepos, size) != (0xfa00, 0xfa00, 0xe0358)
+            or not (section[2] & 4) or size % 4
+            or filepos+size > len(elf)):
+        raise ValueError("original .text layout changed")
+    targets = {0x2616c: [], 0x2682c: [], 0x26bc0: []}
+    for pos in range(filepos, filepos+size, 4):
+        instruction = struct.unpack_from("<I", elf, pos)[0]
+        if instruction >> 26 != 0b100101:
+            continue
+        pc = start + pos-filepos
+        relative = instruction & 0x3ffffff
+        if relative & (1 << 25):
+            relative -= 1 << 26
+        target = pc + relative*4
+        if target in targets:
+            targets[target].append(pc)
+    totals = {hex(dest): len(sites) for dest,sites in targets.items()}
+    if totals != {"0x2616c": 83, "0x2682c": 84, "0x26bc0": 48}:
+        raise ValueError("original direct helper callsite census changed")
+    for target,sites in (
+        (0x2616c,(0x5af34,0x5b3dc)),
+        (0x2682c,(0x5af44,0x5b3f0)),
+        (0x26bc0,(0x5af68,0x5b40c)),
+    ):
+        if any(site not in targets[target] for site in sites):
+            raise ValueError("required root recording callsites absent")
+    return totals
+
+
 def audit(elf):
     if hashlib.sha256(elf).hexdigest() != ELF_SHA:
         raise ValueError("original inner ELF SHA-256 mismatch")
@@ -130,6 +197,7 @@ def audit(elf):
             raise ValueError("original ARM64 instruction changed at " + hex(va))
     for pc, dest in (
         (0x5af34, 0x2616c), (0x5af44, 0x2682c), (0x5af68, 0x26bc0),
+        (0x5b3dc, 0x2616c), (0x5b3f0, 0x2682c), (0x5b40c, 0x26bc0),
         (0x26748, 0xf800), (0x26930, 0xf860), (0x269b0, 0xf1d0),
         (0x26d24, 0x12f00), (0x26d30, 0xf0c0), (0x26d44, 0xf860),
         (0x26d5c, 0xf860), (0x26d70, 0xf420),
@@ -162,8 +230,10 @@ def audit(elf):
     marker = ((0xb6a2 << 16) | 0x81f1) | 10
     if marker != 0xb6a281fb:
         raise ValueError("original record marker computation changed")
+    census = native_callsite_census(elf)
     return {
         "inner_elf_sha256": ELF_SHA,
+        "direct_BL_calls_in_entire_text": census,
         "positive_guard_followup": {
             "site": "0x5af18",
             "key_selector": "0x5af20 mov w0,#1",
@@ -177,6 +247,15 @@ def audit(elf):
             "update_parameters": {
                 "key": key, "numeric_flags": 1,
                 "marker": hex(marker),
+            },
+            "second_root_update": {
+                "entry": "0x5b3c0, guarded by 0x5b344 bit0",
+                "key_selector": "0x5b3c8 w0=1, also root",
+                "lookup_call": "0x5b3dc -> 0x2616c",
+                "read_call": "0x5b3f0 -> 0x2682c",
+                "conditional_update_call": "0x5b40c -> 0x26bc0",
+                "marker": "0xb6a281f1",
+                "difference_from_first_marker": "0x0a",
             },
         },
         "storage": {
