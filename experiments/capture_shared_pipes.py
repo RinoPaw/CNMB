@@ -199,6 +199,73 @@ def read_pipe_fds(pids):
                    timeout=6)
 
 
+def diagnose_fd_access(package):
+    """Read-only, single-shot comparison of su shell FD and target FD access.
+
+    Both probes execute under the same 'su -c' command and reveal only
+    aggregate counts. Zero target links alone cannot identify the denying
+    Android security layer or prove pipes are absent.
+    """
+    if run_adb("shell", "su", "-c", "id -u", timeout=5).strip() != "0":
+        raise RuntimeError("root uid not available")
+    ps = run_adb("shell", "ps", "-A", "-o", "PID,PPID,UID,NAME", timeout=5)
+    parents, identities, _ = select_app_uid_processes(ps, package)
+    target_pids = sorted(
+        pid for pid, kind in identities.items() if kind == "target_package")
+    # No process name, cmdline, proc path or raw readlink target is exported.
+    # Single target is sufficient for the read-only access diagnosis.
+    target_pids = target_pids[:1]
+    command = READ_PIPES % {
+        "pids": "$" + "".join(f" {pid}" for pid in target_pids)}
+    raw = run_adb("shell", "su", "-c", command, timeout=6)
+    seen = {int(match.group("pid")) for line in raw.splitlines()
+            if (match := PROBE_ROW.fullmatch(line.strip()))}
+    self_pids = seen - set(target_pids)
+    self_probe = parse_probe_stats(raw, self_pids)
+    target_probe = parse_probe_stats(raw, target_pids)
+    self_ok = (len(self_pids) == 1
+               and self_probe["fd_readlink_success_count"] > 0)
+    target_ok = (bool(target_pids) and target_probe["probes_complete"]
+                 and target_probe["fd_readlink_success_count"] > 0)
+    if not target_pids:
+        status = "target_not_running"
+    elif target_ok:
+        status = "target_fd_readlink_accessible"
+    elif not self_ok:
+        status = "root_shell_self_fd_check_failed"
+    elif not target_probe["probes_complete"]:
+        status = "target_fd_probe_incomplete_or_process_exited"
+    elif target_probe["fd_dir_exists_count"]:
+        status = "target_fd_denied_or_hidden"
+    else:
+        status = "target_fd_not_present_or_inaccessible"
+    return {
+        "status": status,
+        "root_uid_confirmed": True,
+        "target_package_pid_seen": bool(target_pids),
+        "root_shell": {
+            "probe_count": self_probe["probe_pid_count"],
+            "fd_dir_readable": self_probe["fd_dir_readable_count"] > 0,
+            "fd_dir_searchable": self_probe["fd_dir_searchable_count"] > 0,
+            "fd_glob_matches": self_probe["fd_glob_match_count"],
+            "fd_readlinks_succeeded": self_probe["fd_readlink_success_count"],
+        },
+        "target_process": {
+            "probe_count": target_probe["probe_pid_count"],
+            "fd_dir_exists": target_probe["fd_dir_exists_count"] > 0,
+            "fd_dir_readable": target_probe["fd_dir_readable_count"] > 0,
+            "fd_dir_searchable": target_probe["fd_dir_searchable_count"] > 0,
+            "fd_glob_matches": target_probe["fd_glob_match_count"],
+            "fd_readlinks_succeeded": target_probe["fd_readlink_success_count"],
+        },
+        "interpretation": (
+            "Compares the current su shell with a target-package PID in one "
+            "privileged command; no reboot or app changes. A denied target "
+            "may reflect procfs permission, SELinux, kernel ptrace rules, "
+            "or process-specific restrictions. No pipe contents were read.")
+    }
+
+
 def observe(package, seconds, interval, launch=False):
     # Fail on unavailable root BEFORE force-stopping any application.
     if run_adb("shell", "su", "-c", "id -u", timeout=5).strip() != "0":
@@ -321,16 +388,22 @@ def main():
     parser.add_argument("--poll-seconds", type=float, default=0.2)
     parser.add_argument("--launch", action="store_true",
                         help="force-stop and relaunch target app (opt-in)")
+    parser.add_argument("--diagnose-access", action="store_true",
+                        help="single-shot non-restarting comparison of root and app FD access")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if not SAFE_PACKAGE.fullmatch(args.package):
         parser.error("invalid package name")
+    if args.diagnose_access and args.launch:
+        parser.error("--diagnose-access is non-restarting; omit --launch")
     if not 0 < args.seconds <= 120 or not 0.1 <= args.poll_seconds <= 10:
         parser.error("seconds must be 0..120, poll-seconds 0.1..10")
     try:
         require_ready_device()
-        result = observe(args.package, args.seconds, args.poll_seconds, args.launch)
-    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        result = (diagnose_fd_access(args.package) if args.diagnose_access
+                  else observe(args.package, args.seconds, args.poll_seconds,
+                               args.launch))
+    except (RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:
         parser.exit(2, f"ADB/root precheck failed: {type(exc).__name__}: {exc}\n")
     out = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
