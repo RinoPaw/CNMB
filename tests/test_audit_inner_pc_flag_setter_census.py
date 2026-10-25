@@ -42,7 +42,6 @@ class SetStaticFieldCensusTests(unittest.TestCase):
 
     def test_accepts_synthetic_elf_structure_with_patched_pinned_range(self):
         raw=make_elf()
-        self.assertEqual(a.elf_text_range(raw[:]) if False else len(raw),len(raw))
         with patch.object(a,"EXPECTED_TEXT",(0x1000,16)):
             self.assertEqual(a.elf_text_range(raw),(0x1000,16,0x100))
             struct.pack_into("<IIII",raw,0x100,
