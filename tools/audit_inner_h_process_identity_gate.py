@@ -46,6 +46,32 @@ WORDS = {
     0x2c92c:0x340001c0, # bs zero result continues
     0x2c970:0x39403108, 0x2c974:0x34fffde8, # bs runtime +0xc
 }
+# Original identity helper also reconstructs :rs twice and selects one of
+# four numeric return blocks. These sites are from the same pinned nested ELF.
+STATUS_WORDS = {
+    0x2c1f8:0x900007cc, 0x2c1fc:0x9104398c,  # x12 = printable ASCII table+0x1a
+    0x2c200:0x39400188, 0x2c208:0x3940e18a, 0x2c210:0x3940e589,
+    0x2c21c:0x39400189, 0x2c224:0x3940e18b, 0x2c22c:0x3940e58d,
+    0x2c234:0x3940018c,  # 2 x (:rs) byte load sequence
+    0x2c278:0xaa0c03ee, 0x2c298:0x39400610, 0x2c29c:0x386f69b1,
+    0x2c2a0:0x6b11021f, 0x2c2a8:0x34000090,  # :rs match -> result 1
+    0x2c2b8:0x52800020,  # result 1
+    0x2c378:0x910083e8, 0x2c38c:0x7100e95f,  # cmp byte with ':'
+    0x2c390:0x540004e0,  # b.eq to result 2 at 0x2c42c
+    0x2c3a0:0xb4000313, 0x2c3a8:0x3400046a, # missing vs empty expected
+    0x2c3c4:0x6b0a013f, 0x2c3c8:0x540001c1, # initial char unequal -> result 3
+    0x2c3d4:0x52800060, 0x2c3e0:0xeb09011f, # count of expected chars
+    0x2c3e4:0x54000280,  # b.eq directly to result 0
+    0x2c3e8:0x3869696c, 0x2c3ec:0x38696a6a,
+    0x2c3f0:0x91000529, 0x2c3f4:0x6b0a019f,
+    0x2c3f8:0x54ffff00,  # b.eq back to loop; no actual-string NUL check
+    0x2c400:0x52800060,  # result 3
+    0x2c42c:0x52800040,  # result 2
+    0x2c434:0x2a1f03e0,  # result 0
+}
+COLON_RS_SITES = (0x2c200,0x2c208,0x2c210)
+COLON_RS_REPEAT = (0x2c21c,0x2c224,0x2c22c)
+
 PREFIX_SITES = (0x2bf98, 0x2bfa4, 0x2bfac, 0x2bfb4, 0x2bfbc, 0x2bfc4)
 SUFFIX_SITES = (0x2bfd0, 0x2bfd8, 0x2bfe0, 0x2bfe8,
                 0x2bff0, 0x2bff8, 0x2c000, 0x2c008)
@@ -91,6 +117,54 @@ def branch_imm_target(w, pc, opcode, target):
         raise ValueError("changed original conditional branch target")
 
 
+def decoded_status_guard(elf, chars):
+    for pc,expected in STATUS_WORDS.items():
+        if word(elf,pc)!=expected:
+            raise ValueError("original identity status instruction changed at "+hex(pc))
+    if not chars==bytes(range(32,127)):
+        raise ValueError("wrong original printable table")
+    strings=[]
+    for sites in (COLON_RS_SITES,COLON_RS_REPEAT):
+        sequence=[]
+        for pc in sites:
+            instruction=word(elf,pc)
+            if (instruction & 0xffc003e0)!=0x39400180:
+                raise ValueError("status marker does not load via X12")
+            offset=0x1a+((instruction>>10)&0xfff)
+            if offset>=len(chars):
+                raise ValueError("status marker index out of ASCII table")
+            sequence.append(chars[offset])
+        strings.append(bytes(sequence))
+    if strings!=[b":rs",b":rs"]:
+        raise ValueError("original special process suffix changed")
+    # The B.cond condition codes and target addresses are pinned separately,
+    # so the result semantics are not inferred only from numerical literals.
+    def branch(pc,target,condition):
+        insn=word(elf,pc)
+        if insn & 0xff000010 != 0x54000000 or (insn&15)!=condition:
+            raise ValueError("original status B.cond opcode/condition changed")
+        imm=(insn>>5)&0x7ffff
+        if imm&(1<<18):
+            imm-=1<<19
+        if pc+imm*4!=target:
+            raise ValueError("original status B.cond target changed")
+    branch(0x2c390,0x2c42c,0) # colon -> return 2
+    branch(0x2c3c8,0x2c400,1) # nonmatching first char -> return 3
+    branch(0x2c3e4,0x2c434,0) # expected-character count reached -> 0
+    branch(0x2c3f8,0x2c3d8,0) # equal -> loop
+    branch_imm_target(word(elf,0x2c2a8),0x2c2a8,0x34000000,0x2c2b8)
+    branch_imm_target(word(elf,0x2c3a8),0x2c3a8,0x34000000,0x2c434)
+    return {
+        "special_marker":":rs",
+        "return_1":"special :rs matched in process command line",
+        "return_2":"remaining process command line contains ':'",
+        "return_3":"expected process name unavailable/nonmatching or file open error",
+        "return_0":"expected name empty or expected-length byte prefix equal",
+        "subtlety":"prefix comparison does not require actual cmdline NUL immediately after expected name",
+        "observed_execution":False,
+    }
+
+
 def audit(elf):
     if hashlib.sha256(elf).hexdigest() != SHA:
         raise ValueError("original nested ELF SHA-256 mismatch")
@@ -114,6 +188,7 @@ def audit(elf):
     suffix = text_from_original_ldr(elf, chars, SUFFIX_SITES)
     if (prefix, suffix) != ("/proc/", "/cmdline"):
         raise ValueError("original procfs identity path changed")
+    status_semantics = decoded_status_guard(elf, chars)
     if (bl_target(elf, 0x2c498) != 0x2bf68 or
             bl_target(elf, 0x2c928) != 0x2bf68):
         raise ValueError("sw/bs no longer share identity helper")
@@ -135,7 +210,7 @@ def audit(elf):
                 "compare procfs cmdline against runtime expected name"
             ],
             "possible_return_codes": [0, 1, 2, 3],
-            "code_semantics": "individual return-code meaning not fully established"
+"status_semantics": status_semantics
         },
         "sw_gate": {
             "entry": "0x2c440",
