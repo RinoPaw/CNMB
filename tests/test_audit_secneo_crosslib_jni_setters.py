@@ -68,6 +68,21 @@ class CrossLibSettersTests(unittest.TestCase):
         self.assertEqual(a.SITES["libDexHelper.so"][0],
                          (0x2c5c8, 0x2c5d8, 0x2c5e0))
 
+    def test_direct_bl_caller_census_excludes_indirect_call(self):
+        elf = synthetic_stripped_elf()
+        # 0x1020 -> BL 0x1030, branch imm = +4 instructions.
+        struct.pack_into("<I", elf, 0x120, 0x94000004)
+        struct.pack_into("<I", elf, 0x124, 0xd63f0100) # BLR x8
+        self.assertEqual(a.direct_bl_callers(elf, 0x1030), [0x1020])
+        self.assertEqual(a.direct_bl_callers(elf, 0x1040), [])
+        # An invalid opcode at the same position must cease to be a BL caller.
+        struct.pack_into("<I", elf, 0x120, 0x14000004) # B (not BL)
+        self.assertEqual(a.direct_bl_callers(elf, 0x1030), [])
+
+    def test_runtime_dispatcher_input_sites_are_original_pins(self):
+        self.assertEqual(a.SITES["libdexjni.so"][1][1], 0x863bc)
+        self.assertEqual(a.SITES["libdexvmp.so"][0][1], 0x6a154)
+
     def test_original_apk_sha_is_required(self):
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             a.audit_apk(b"synthetic cannot substitute original")
