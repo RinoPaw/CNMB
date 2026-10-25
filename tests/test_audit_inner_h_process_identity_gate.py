@@ -66,6 +66,38 @@ class IdentityGateTests(unittest.TestCase):
         self.assertEqual((0x01000101 >> 8) & 0xff,1)
         self.assertEqual(store_at+1,0x12a690)
 
+    def test_original_status_codes_and_prefix_comparison_are_pinned(self):
+        words=dict(a.STATUS_WORDS)
+        with patch.object(a,"word",side_effect=lambda elf,pc:words[pc]):
+            result=a.decoded_status_guard(
+                b"synthetic",bytes(range(32,127)))
+        self.assertEqual(result["special_marker"],":rs")
+        self.assertIn("prefix",result["return_0"])
+        self.assertIn("':'",result["return_2"])
+        self.assertFalse(result["observed_execution"])
+
+        words[0x2c390]^=1 # mutate EQ branch opcode condition
+        with patch.object(a,"word",side_effect=lambda elf,pc:words[pc]):
+            with self.assertRaisesRegex(ValueError,"status instruction changed"):
+                a.decoded_status_guard(b"synthetic",bytes(range(32,127)))
+
+    def test_prefix_guard_has_no_actual_cmdline_end_check(self):
+        # Expected-length count w9 compared to x8 at 0x2c3e0.
+        # 0x2c3e4 B.EQ directly returns zero; preceding loop compares only
+        # equal-position bytes without asserting cmdline[n] is NUL.
+        self.assertEqual(a.STATUS_WORDS[0x2c3e0],0xeb09011f)
+        self.assertEqual(a.STATUS_WORDS[0x2c3e4],0x54000280)
+        self.assertEqual(a.STATUS_WORDS[0x2c3e8],0x3869696c)
+        self.assertEqual(a.STATUS_WORDS[0x2c3ec],0x38696a6a)
+        self.assertEqual(a.STATUS_WORDS[0x2c3f4],0x6b0a019f)
+
+    def test_special_suffix_and_colon_paths_are_separate(self):
+        self.assertEqual(a.STATUS_WORDS[0x2c2b8],0x52800020)
+        self.assertEqual(a.STATUS_WORDS[0x2c42c],0x52800040)
+        self.assertEqual(a.STATUS_WORDS[0x2c400],0x52800060)
+        self.assertEqual(a.STATUS_WORDS[0x2c434],0x2a1f03e0)
+        self.assertEqual(a.STATUS_WORDS[0x2c38c],0x7100e95f)
+
     def test_original_elf_hash_required_before_any_interpretation(self):
         with self.assertRaisesRegex(ValueError,"SHA-256"):
             a.audit(b"synthetic-no-original")
