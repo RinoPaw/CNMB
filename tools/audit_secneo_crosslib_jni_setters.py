@@ -100,6 +100,24 @@ def candidate_sites(elf):
     return candidates, executable_bytes
 
 
+def direct_bl_callers(elf, target):
+    """Only direct AArch64 BL, not B/BLR/BR or data-pointer callbacks."""
+    matches = []
+    for va, off, size in executable_segments(elf):
+        start = off + (-va) % 4
+        for position in range(start, off+size-3, 4):
+            insn = struct.unpack_from("<I", elf, position)[0]
+            if insn >> 26 != 0b100101:
+                continue
+            disp = insn & 0x3ffffff
+            if disp & (1 << 25):
+                disp -= 1 << 26
+            site = va + position-off
+            if site+disp*4 == target:
+                matches.append(site)
+    return sorted(matches)
+
+
 def audit_apk(apk):
     if hashlib.sha256(apk).hexdigest() != APK_SHA:
         raise ValueError("original base APK SHA-256 mismatch")
@@ -153,6 +171,20 @@ def audit_apk(apk):
         if (word(focused[name], findclass) != 0xf9401908
                 or word(focused[name], getfield) != 0xf9424108):
             raise ValueError("generic native FindClass/GetStaticFieldID changed")
+    # One concrete direct caller loads its inputs through VM runtime slots.
+    # This proves the input is not a fixed literal at this callsite; it does
+    # not prove any PC_FLAG target or runtime execution.
+    dexjni = focused["libdexjni.so"]
+    for pc, insn in ((0x667f8,0xf8687922),  # x2 <- indexed VM table
+                     (0x66800,0xaa1403e0),  # x0 <- saved JNIEnv
+                     (0x66808,0xf94487e1),  # x1 <- VM stack slot
+                     (0x6680c,0x94007e99)): # BL to 0x86270
+        if word(dexjni, pc) != insn:
+            raise ValueError("original dexjni runtime dispatcher input changed")
+    dexjni_callers = direct_bl_callers(dexjni,0x86270)
+    dexvmp_callers = direct_bl_callers(focused["libdexvmp.so"],0x6a0a0)
+    if dexjni_callers != [0x6680c] or dexvmp_callers:
+        raise ValueError("original generic dispatcher direct BL callers changed")
     # This is a GOT load for printf@plt, not JNI. Including PLT in an
     # executable-segment scan creates raw #0x4d0 false positives.
     if word(focused["libDexHelper.so"], 0xec94) != 0xf9426a11:
@@ -174,6 +206,18 @@ def audit_apk(apk):
                 "FindClass": "0x6a1e8", "GetStaticFieldID": "0x6a1fc",
                 "SetStaticObjectField": ["0x6a154", "0x6a244"],
                 "field_selected_at_runtime": True,
+            },
+        },
+        "direct_dispatcher_callers": {
+            "libdexjni.so": {
+                "entry": "0x86270", "direct_BL": ["0x6680c"],
+                "JNI_env_source": "0x66800 x0 <- x20",
+                "field_descriptor_source": "0x66808 x1 <- [sp+0x908]",
+                "new_field_value_source": "0x667f8 x2 <- [x9,x8,lsl#3]",
+            },
+            "libdexvmp.so": {
+                "entry": "0x6a0a0", "direct_BL": [],
+                "limit": "No direct BL found; indirect calls/branch dispatch are not excluded.",
             },
         },
         "negative_evidence_boundary": (
