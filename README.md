@@ -212,6 +212,12 @@ python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 
 已从原版 ELF 的 `R_AARCH64_RELATIVE` 重定位与初始化指令闭合该身份对象：原始静态地址 `0x12A684` 经全局指针槽 `0x128008` 发布；它的 `+0x0C` 位于 `0x12A690`。原版 XOR/MessagePack 配置 `+0x4A` 为 **true**，会将该字节初始化为 **1**，运行时修改仍未排除。默认 `PC_FLAG=255` 已率先阻止调用；若运行时改变参数，进程身份检查仍是另一道独立守卫。[完整原版指令与证据边界](docs/12.5.5-secneo-h-process-identity-gate.md)；[只读复核工具](tools/audit_inner_h_process_identity_gate.py)。
 
+### 原版 Native 确实能写回 H.PC_FLAG（2026-10-25）
+
+这轮从同一 SHA-256 原版 `libDexHelper.so` 还原了此前未知的**两处真正的 JNI 静态字段写入**：`sw(Context,int)` 经 `0x2C4A4` 对参数 OR `1`，再于 `0x2C5D8` 调用 `SetStaticObjectField`；`bs(Context,int)` 经 `0x2C97C` 对参数 OR `2`，再于 `0x2CAB8` 执行相同的 JNI 字段写入。两端都独立通过原始字符表恢复出 **`PC_FLAG:Ljava/lang/String;`**，并由 `GetStaticFieldID → NewStringUTF → SetStaticObjectField` 将十进制整数重新写回 Java 字段。
+
+**两处改写均受原先的配置位、进程身份、配置对象字段等条件约束**。原始初始值 `255` 同时使两个入口提前返回；目前没有观察到运行时有人清除对应位。基础 `classes.dex` 只有一次直接 `sput-object`，但该限定统计本来就不覆盖 JNI 写字段。[精确 JNI 指令、字段字符串和必要条件](docs/12.5.5-secneo-messenger-service-binding.md)；[更新的原版审计](tools/audit_inner_h_service_lifecycle.py)。
+
 ### SecNeo Messenger Service 绑定路径及默认守卫（2026-10-24）
 
 原版 H 类初始化把 `PC_FLAG` 设置为字符串 **`"255"`**，`AW.onCreate` 调用的 `H.callSW/ H.callBS` 会解析该值传入原生方法 `sw/bs`。内层 ELF 证明 `sw` 的 bit0（`0x2C46C`）和 `bs` 的 bit1（`0x2C90C`）为 1 时提前返回；初始值 `255` 同时满足两项，因此**不能宣称原版默认启动就会建立 Messenger 的 Service 连接**。后续可能的运行时参数变更尚未排查。
