@@ -212,6 +212,12 @@ python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 
 已从原版 ELF 的 `R_AARCH64_RELATIVE` 重定位与初始化指令闭合该身份对象：原始静态地址 `0x12A684` 经全局指针槽 `0x128008` 发布；它的 `+0x0C` 位于 `0x12A690`。原版 XOR/MessagePack 配置 `+0x4A` 为 **true**，会将该字节初始化为 **1**，运行时修改仍未排除。默认 `PC_FLAG=255` 已率先阻止调用；若运行时改变参数，进程身份检查仍是另一道独立守卫。[完整原版指令与证据边界](docs/12.5.5-secneo-h-process-identity-gate.md)；[只读复核工具](tools/audit_inner_h_process_identity_gate.py)。
 
+### PC_FLAG 写入点：已完成原版 ELF 全 .text 直接 JNI 调用扫描
+
+重新从原版 12.5.5 APK 验证 SHA-256，扫描恢复的内层 `libDexHelper.so` 的完整 `.text`（`0xFA00` 起，`0xE0358` 字节）。AArch64 `LDR Xt,[Xn,#0x4D0]` 这种直接读取 JNI `SetStaticObjectField` 虚表项的指令 **恰好只有两处**：`0x2C5D8` 和 `0x2CAB8`，均来自已经恢复的 `sw/bs` 两条 `PC_FLAG` 字符串更新链。原版机器码与字段名已逐字节核对。它们分别执行原参数 `| 1`、`| 2`，只能设置对应位；原始初始 `255` 又会先命中两道提前返回守卫。
+
+这是**限定寻址形式与此内层 ELF 的阴性证据**：间接 JNI 包装、计算偏移、其他 SO、反射和运行时代码仍可能修改字段，不得推断永远不存在清位写入。当前也没有设备实际执行 `IsoService` 绑定或 DEC 因果关系的证据。[原版全段扫描与完整边界](docs/12.5.5-secneo-pc-flag-static-setter-census.md)；[可复核工具](tools/audit_inner_pc_flag_setter_census.py)。
+
 ### 原版 Native 确实能写回 H.PC_FLAG（2026-10-25）
 
 这轮从同一 SHA-256 原版 `libDexHelper.so` 还原了此前未知的**两处真正的 JNI 静态字段写入**：`sw(Context,int)` 经 `0x2C4A4` 对参数 OR `1`，再于 `0x2C5D8` 调用 `SetStaticObjectField`；`bs(Context,int)` 经 `0x2C97C` 对参数 OR `2`，再于 `0x2CAB8` 执行相同的 JNI 字段写入。两端都独立通过原始字符表恢复出 **`PC_FLAG:Ljava/lang/String;`**，并由 `GetStaticFieldID → NewStringUTF → SetStaticObjectField` 将十进制整数重新写回 Java 字段。
@@ -220,7 +226,7 @@ python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 
 ### SecNeo Messenger Service 绑定路径及默认守卫（2026-10-24）
 
-原版 H 类初始化把 `PC_FLAG` 设置为字符串 **`"255"`**，`AW.onCreate` 调用的 `H.callSW/ H.callBS` 会解析该值传入原生方法 `sw/bs`。内层 ELF 证明 `sw` 的 bit0（`0x2C46C`）和 `bs` 的 bit1（`0x2C90C`）为 1 时提前返回；初始值 `255` 同时满足两项，因此**不能宣称原版默认启动就会建立 Messenger 的 Service 连接**。后续可能的运行时参数变更尚未排查。
+原版 H 类初始化把 `PC_FLAG` 设置为字符串 **`"255"`**，`AW.onCreate` 调用的 `H.callSW/ H.callBS` 会解析该值传入原生方法 `sw/bs`。内层 ELF 证明 `sw` 的 bit0（`0x2C46C`）和 `bs` 的 bit1（`0x2C90C`）为 1 时提前返回；初始值 `255` 同时满足两项，因此**不能宣称原版默认启动就会建立 Messenger 的 Service 连接**。已确认原版原生代码存在按位 OR 设置标志的条件写入点，但尚未找到清除这些位的实际来源。
 
 通过原版 JNI 代码完整恢复被守卫的服务绑定流程：格式串 **`%s/IsoService`**（类名前缀来自运行时对象 `+0x40`）、`Intent(Context,Class)`、`Context.bindService(Intent,ServiceConnection,BIND_AUTO_CREATE)`；接收 what=1000 回复后可走 `Context.unbindService(H.sConnection)`。原版基础 APK 的 Manifest 共 78 个 Service 声明，**没有任何名称以 `IsoService` 结尾**。此项只约束当前原版基础包，未知其他运行时安装状态；远端 `arg2` 实际数值、成功绑定及 DEC 因果关系仍未证明。[原版四项 JNI 注册、绑定守卫与 Manifest 证据](docs/12.5.5-secneo-messenger-service-binding.md)；[可复核工具](tools/audit_inner_h_service_lifecycle.py)。
 
