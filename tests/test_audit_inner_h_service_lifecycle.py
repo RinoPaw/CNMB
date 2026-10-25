@@ -75,6 +75,46 @@ class SecneoServiceLifecycleTests(unittest.TestCase):
                 audit.native_registration_name(
                     b"",bytes(range(32,127)),(0x154d8,0x154e4))
 
+    def test_both_native_pc_flag_writers_recover_same_field(self):
+        table=bytes(range(32,127))
+        field="PC_FLAGLjava/lang/String;"
+        self.assertEqual(len(field),25)
+        original_form={}
+        for sites,base,reg in (
+                (audit.PC_FLAG_SW_LOADS,0,23),
+                (audit.PC_FLAG_BS_LOADS,8,26)):
+            for pc,char in zip(sites,field):
+                offset=ord(char)-32-base
+                self.assertGreaterEqual(offset,0)
+                original_form[pc]=0x39400000|(offset<<10)|(reg<<5)|8
+        with patch.object(audit,"elf_word",
+                          side_effect=lambda elf,pc:original_form[pc]):
+            sw=audit.native_pc_flag_field(
+                b"synthetic",table,audit.PC_FLAG_SW_LOADS,0,23)
+            bs=audit.native_pc_flag_field(
+                b"synthetic",table,audit.PC_FLAG_BS_LOADS,8,26)
+        self.assertEqual(sw,bs)
+        self.assertEqual(sw,{"name":"PC_FLAG",
+                             "descriptor":"Ljava/lang/String;"})
+        original_form[audit.PC_FLAG_BS_LOADS[0]]^=1
+        with patch.object(audit,"elf_word",
+                          side_effect=lambda elf,pc:original_form[pc]):
+            with self.assertRaisesRegex(ValueError,"field LDRB"):
+                audit.native_pc_flag_field(
+                    b"",table,audit.PC_FLAG_BS_LOADS,8,26)
+
+    def test_native_setters_or_flags_and_write_java_static_string(self):
+        self.assertEqual(audit.NATIVE_WORDS[0x2c4a4],0x320002a3)
+        self.assertEqual(audit.NATIVE_WORDS[0x2c97c],0x321f02c3)
+        for field_get,string_new,field_set in (
+                (0x2c5a8,0x2c5c0,0x2c5d8),
+                (0x2ca88,0x2caa0,0x2cab8)):
+            self.assertEqual(audit.NATIVE_WORDS[field_get],0xf9424108)
+            self.assertEqual(audit.NATIVE_WORDS[string_new],0xf9429d08)
+            self.assertEqual(audit.NATIVE_WORDS[field_set],0xf9426908)
+        self.assertEqual(255|1,255)
+        self.assertEqual(255|2,255)
+
     def test_corrupted_original_ldr_operand_is_rejected(self):
         with patch.object(audit,"elf_word",return_value=0x39400008):
             with self.assertRaisesRegex(ValueError,"LDRB operands"):
