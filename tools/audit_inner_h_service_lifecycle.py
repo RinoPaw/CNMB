@@ -39,7 +39,20 @@ NATIVE_WORDS = {
     0x155e8:0xd63f0100,
     0x2c464:0xb4002242, # sw: cbz Context
     0x2c46c:0x37002203, # sw: tbnz w3 bit0 -> return
+    0x2c468:0x2a0303f5, # sw preserve incoming flags
+    0x2c4a4:0x320002a3, # sw formatter arg: incoming flags | 1
+    0x2c4b8:0x97ffe2cb, # sw snprintf("%d")
+    0x2c4bc:0x900007d7, 0x2c4c0:0x9103d2f7, # x23=printable table
+    0x2c5a8:0xf9424108, # sw GetStaticFieldID +0x480
+    0x2c5c0:0xf9429d08, # sw NewStringUTF +0x538
+    0x2c5d8:0xf9426908, # sw SetStaticObjectField +0x4d0
     0x2c904:0xb4000162, # bs: cbz Context
+    0x2c97c:0x321f02c3, # bs formatter arg: incoming flags | 2
+    0x2c998:0x97ffe193, # bs snprintf("%d")
+    0x2c99c:0x900007da, # bs printable table page
+    0x2ca88:0xf9424108, # bs GetStaticFieldID +0x480
+    0x2caa0:0xf9429d08, # bs NewStringUTF +0x538
+    0x2cab8:0xf9426908, # bs SetStaticObjectField +0x4d0
     0x2c90c:0x37080123, # bs: tbnz w3 bit1 -> return
     0x2c9a0:0x9103f35a, # JNI string table+8
     0x2cc34:0x9103e529, # JNI string table+5
@@ -73,6 +86,20 @@ STRINGS = (
                           0x2d06c,0x2d074,0x2d07c,0x2d084,0x2d08c,
                           0x2d094),0x21,8),
 )
+# Original LDRB W8,[X23/X26,#imm] sites. The different base offsets
+# still construct identical field name + JNI descriptor in both functions.
+PC_FLAG_SW_LOADS = (0x2c4c4,0x2c4d8,0x2c4e4,0x2c4ec,0x2c4f4,0x2c4fc,
+                    0x2c504,0x2c510,0x2c518,0x2c520,0x2c528,0x2c530,
+                    0x2c538,0x2c540,0x2c548,0x2c550,0x2c558,0x2c560,
+                    0x2c568,0x2c570,0x2c578,0x2c580,0x2c588,0x2c590,
+                    0x2c598)
+PC_FLAG_BS_LOADS = (0x2c9a4,0x2c9b8,0x2c9c4,0x2c9cc,0x2c9d4,0x2c9dc,
+                    0x2c9e4,0x2c9f0,0x2c9f8,0x2ca00,0x2ca08,0x2ca10,
+                    0x2ca18,0x2ca20,0x2ca28,0x2ca30,0x2ca38,0x2ca40,
+                    0x2ca48,0x2ca50,0x2ca58,0x2ca60,0x2ca68,0x2ca70,
+                    0x2ca78)
+
+
 DEX_WORDS = {
     0x3e18:0x1071, 0x3e1a:0x0083, # AW.onCreate -> H.callSW
     0x3e26:0x1071, 0x3e28:0x0082, # AW.onCreate -> H.callBS
@@ -105,6 +132,25 @@ def decoded_indexed_string(elf, ascii_table, sites, base, register):
             raise ValueError("original printable table index out of bounds")
         chars.append(ascii_table[index])
     return bytes(chars).decode("ascii")
+
+
+def native_pc_flag_field(elf, printable, sites, base_index, base_reg):
+    """Decode original LDRB instructions specifying the JNI static field."""
+    result=[]
+    if len(sites)!=25:
+        raise ValueError("unexpected original JNI field literal length")
+    for site in sites:
+        insn=elf_word(elf,site)
+        if insn & 0xffc003ff != (0x39400000 | (base_reg<<5) | 8):
+            raise ValueError("changed JNI PC_FLAG field LDRB at "+hex(site))
+        index=base_index+((insn>>10)&0xfff)
+        if not 0<=index<len(printable):
+            raise ValueError("original JNI field index outside printable table")
+        result.append(printable[index])
+    literal=bytes(result).decode("ascii")
+    if literal!="PC_FLAGLjava/lang/String;":
+        raise ValueError("original PC_FLAG JNI field name/descriptor changed")
+    return {"name":literal[:7], "descriptor":literal[7:]}
 
 
 def native_registration_name(elf, printable, sites):
@@ -260,6 +306,17 @@ def audit(elf,dex,manifest):
         if page+offset!=address:
             raise ValueError("original JNI callback pointer changed")
     ascii_table=decode_table(elf)
+    static_field_sw=native_pc_flag_field(
+        elf,ascii_table,PC_FLAG_SW_LOADS,0,23)
+    static_field_bs=native_pc_flag_field(
+        elf,ascii_table,PC_FLAG_BS_LOADS,8,26)
+    if static_field_sw!=static_field_bs:
+        raise ValueError("sw/bs JNI field names differ")
+    if elf[elf_file_offset(elf,0xffc4a):elf_file_offset(elf,0xffc4a)+3] != b"%d\x00":
+        raise ValueError("original PC_FLAG integer formatter changed")
+    if (bl_target(elf,0x2c4b8)!=0x24fe4
+            or bl_target(elf,0x2c998)!=0x24fe4):
+        raise ValueError("PC_FLAG snprintf call changed")
     for expected,sites,base,reg in STRINGS:
         actual=decoded_indexed_string(elf,ascii_table,sites,base,reg)
         if actual!=expected:raise ValueError("original decoded JNI literal changed")
@@ -289,6 +346,25 @@ def audit(elf,dex,manifest):
         "original_inner_elf_sha256":INNER_SHA,
         "original_classes_dex_sha256":DEX_SHA,
         "default_flag":"255 (0xff) from H.<clinit> at 0x42ec",
+        "native_pc_flag_updates":{
+            "field":static_field_sw,
+            "sw":{
+                "formatter":"0x2c4a4 (incoming flags | 1) -> snprintf('%d')",
+                "field_lookup":"0x2c5a8 JNIEnv.GetStaticFieldID",
+                "new_string":"0x2c5c0 JNIEnv.NewStringUTF",
+                "write":"0x2c5d8 JNIEnv.SetStaticObjectField",
+                "precondition":"original flag bit0 clear, runtime byte +0xc nonzero, process identity check returns zero"
+            },
+            "bs":{
+                "formatter":"0x2c97c (incoming flags | 2) -> snprintf('%d')",
+                "field_lookup":"0x2ca88 JNIEnv.GetStaticFieldID",
+                "new_string":"0x2caa0 JNIEnv.NewStringUTF",
+                "write":"0x2cab8 JNIEnv.SetStaticObjectField",
+                "precondition":"original flag bit1 clear, process identity check returns zero, runtime byte +0xc nonzero"
+            },
+            "under_initial_flag_255":"both corresponding bit guards return before either write",
+            "other_writers_unexcluded":True,
+        },
         "PC_FLAG_base_dex_direct_field_sites":field_sites,
         "java_callers":{
             "H.callSW":"Integer.parseInt(H.PC_FLAG) -> H.sw(Context,int)",
