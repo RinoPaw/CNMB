@@ -206,6 +206,12 @@ python .\tools\audit_secneo_h_ipc.py .\path\to\original-base.apk
 python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 ~~~
 
+### 进程身份守卫：四种返回值与前缀匹配（2026-10-25）
+
+原版 `libDexHelper.so` 的 `0x2BF68` 读取 `/proc/<自身PID>/cmdline` 后，有四类经过原始 ARM64 指令验证的结果：特殊的 `:rs` 字符串路径返回 1；后续一般冒号 `:` 路径返回 2；文件打开失败、期望名称缺失或不匹配等路径返回 3；期望字符串为空或按其长度比较的前缀相同则可返回 0。**返回 0 的普通名称判断未要求实际进程命令行在期望字符串末尾立即终止**，因此不能按完整字符串严格相等理解。对 `sw/bs` 来说只允许返回 0 继续执行，但默认 `PC_FLAG=255` 已在更早位置阻断。
+
+已用同一 SHA-256 原版内层 ELF 检查两次 `:rs` 的字符构造、冒号比较、四个返回目标及前缀循环；尚未证明设备发生过 `IsoService` 绑定或收到特定 `arg2`。[更新后的原版研究报告](docs/12.5.5-secneo-h-process-identity-gate.md)；[可重复静态审计](tools/audit_inner_h_process_identity_gate.py)。
+
 ### sw/bs 的进程身份检查及初始配置字节（2026-10-24）
 
 原版 `libDexHelper.so` 中，`sw(Context,int)` 和 `bs(Context,int)` 在各自 `PC_FLAG` 位检查允许继续后，都调用 `0x2BF68`：它根据 `getpid` 构造并读取 **`/proc/<自身PID>/cmdline`**，与运行时配置的期望进程名比较。两个调用点只允许**检查返回零**的分支继续；还要求身份对象的 `+0x0C` 字节非零。
