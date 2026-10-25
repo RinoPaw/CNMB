@@ -218,6 +218,12 @@ python .\tools\audit_inner_h_pipe_receiver.py .\path\to\original-base.apk
 
 已从原版 ELF 的 `R_AARCH64_RELATIVE` 重定位与初始化指令闭合该身份对象：原始静态地址 `0x12A684` 经全局指针槽 `0x128008` 发布；它的 `+0x0C` 位于 `0x12A690`。原版 XOR/MessagePack 配置 `+0x4A` 为 **true**，会将该字节初始化为 **1**，运行时修改仍未排除。默认 `PC_FLAG=255` 已率先阻止调用；若运行时改变参数，进程身份检查仍是另一道独立守卫。[完整原版指令与证据边界](docs/12.5.5-secneo-h-process-identity-gate.md)；[只读复核工具](tools/audit_inner_h_process_identity_gate.py)。
 
+### SecNeo 跨库 JNI 写入能力与运行时输入来源（2026-10-25）
+
+原版 APK 中 191 个 ARM64 .so 文件经可执行 `PT_LOAD` 扫描，176 个 ELF 可解析，另有 15 个非 ELF/空文件；共审计约 **92.8 MB 原生可执行内容**。原始机器码中找到 219 处 `LDR #0x4D0` 候选、9 处符合预设的 JNI 调用形态。逐指令独立核验的 SecNeo 相关写入点共六处，除原先 `libDexHelper.so` 中写 `H.PC_FLAG` 的两处外，**内层 `libdexjni.so` 的 `0x8638C/0x863BC`，以及 `libdexvmp.so` 的 `0x6A154/0x6A244`** 都实际通过 JNI 函数表调用 `SetStaticObjectField`。后四处属于动态字段操作分发器，**没有证据表明它们写过 `H.PC_FLAG` 或清除过对应位**。
+
+更进一步，`libdexjni.so` 原生 `0x6680C` 直接调用分发器 `0x86270`，其字段描述参数来自 VM 栈槽 `[sp+0x908]`，新值来自 VM 索引表 `[x9,x8,lsl#3]`。`libdexvmp.so` 的分发器 `0x6A0A0` 未找到直接 `BL` 引用，间接调用尚未排除。新增[跨库审计工具](tools/audit_secneo_crosslib_jni_setters.py)及[原版证据报告](docs/12.5.5-secneo-crosslib-jni-setter-surface.md)；前一份针对 DexHelper 单库 .text 的双写入点结论仍然成立。
+
 ### PC_FLAG 写入点：已完成原版 ELF 全 .text 直接 JNI 调用扫描
 
 重新从原版 12.5.5 APK 验证 SHA-256，扫描恢复的内层 `libDexHelper.so` 的完整 `.text`（`0xFA00` 起，`0xE0358` 字节）。AArch64 `LDR Xt,[Xn,#0x4D0]` 这种直接读取 JNI `SetStaticObjectField` 虚表项的指令 **恰好只有两处**：`0x2C5D8` 和 `0x2CAB8`，均来自已经恢复的 `sw/bs` 两条 `PC_FLAG` 字符串更新链。原版机器码与字段名已逐字节核对。它们分别执行原参数 `| 1`、`| 2`，只能设置对应位；原始初始 `255` 又会先命中两道提前返回守卫。
